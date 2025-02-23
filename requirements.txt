@@ -1,0 +1,22 @@
+# Core dependencies
+fastapi>=0.115.8
+uvicorn>=0.34.0
+
+# Data processing
+numpy>=1.26.4, <2
+pandas>=1.5.0
+
+# HTTP requests
+requests>=2.32.3
+httpx>=0.28.1
+
+# Asynchronous libraries
+aiohttp>=3.11.12
+anyio>=4.8.0
+
+# Authentication
+google-auth>=2.38.0
+
+# Additional utilities
+pydantic>=2.10.6
+starlette>=0.45.3
