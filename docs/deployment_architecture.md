@@ -1,140 +1,80 @@
-# Deployment Architecture
+# FaultMaven Deployment Architecture
 
-## Overview
+## 1. Introduction
 
-This document outlines the deployment architecture for **FaultMaven**, detailing how various system components are deployed, orchestrated, and managed in a **Kubernetes-based infrastructure**.
+### Purpose
+This document outlines the deployment strategy for FaultMaven, detailing how its components are containerized, orchestrated, and managed in production environments. It defines infrastructure requirements, networking, security considerations, and scalability strategies.
 
-## Key Considerations
-
-The deployment architecture is designed to:
-- Ensure **scalability** by leveraging **containerized microservices** deployed on Kubernetes.
-- Utilize **managed cloud services** for databases and monitoring to reduce operational overhead.
-- Support **resilience and high availability** by implementing redundancy and failover mechanisms.
-- Maintain **security best practices**, including API authentication, encrypted data storage, and network policies.
-
----
-
-## Deployment Diagram
-
-```mermaid
-graph TD
-  %% CI/CD Pipeline
-  subgraph "CI/CD Pipeline 🛠️"
-    A[GitHub Actions 🚀] -->|Build & Push| B[Container Registry 🗄️]
-  end
-
-  %% Kubernetes Cluster
-  subgraph "Kubernetes Cluster ☸️"
-    %% API Layer
-    subgraph "API Layer 🔗"
-      C[FastAPI Gateway 🚪] -->|Route Requests| D[Query Router 🔄]
-      C -->|External API Calls| E[API Adapter Embedded 🔌]
-    end
-
-    %% AI Processing
-    subgraph "AI Processing 🧠"
-      D -->|Log Processing| F[Log Analysis Agent 📊]
-      D -->|Troubleshooting| G[AI Agent PydanticAI 🤖]
-    end
-
-    %% Data Management
-    subgraph "Data Management (Managed Services) 💾"
-      H((Vector DB Qdrant 📚)) -->|Retrieve Context| G
-      I((PostgreSQL RDS 🗄️)) -->|Store Logs| F
-    end
-
-    %% Observability & Monitoring
-    subgraph "Observability & Monitoring (Managed Services) 🔍"
-      J((Prometheus Operator 📈)) -->|Monitor| C
-      K((Amazon OpenSearch 📊)) -->|Logs & Metrics| C
-    end
-  end
-
-  %% Interconnections
-  B -->|Pull Images| C
-  K -->|Insights| C
-```
+### Scope
+The deployment architecture focuses on the production deployment of FaultMaven and includes:
+- **Containerization & Orchestration**
+- **Infrastructure & Resource Allocation**
+- **Networking & API Communication**
+- **Scalability & High Availability**
+- **Security & Compliance**
 
 ---
 
-## Component Breakdown
+## 2. Deployment Model
 
-### **1. API Layer**
-- **FastAPI Gateway** (Deployed as a Kubernetes service)
-  - Handles requests from the **browser extension** and external integrations.
-  - Routes queries to the **Query Router**.
-  - Facilitates interaction with external services via the **Embedded API Adapter**.
+### 2.1 Containerized Monolithic Architecture
+FaultMaven is deployed as a **monolithic service** in its initial version, ensuring minimal inter-process communication overhead. The system can later be modularized into microservices if needed. The primary deployment model includes:
 
-- **Query Router**
-  - Determines whether to direct a request to the **Log Analysis Agent** or the **AI Agent**.
+- **Docker Containers**: Each component runs inside a container.
+- **Kubernetes (K8s) Orchestration**: For auto-scaling, self-healing, and service discovery.
 
-- **Embedded API Adapter** (Part of the FastAPI service)
-  - Connects FaultMaven to external **observability tools** (e.g., Splunk, Datadog).
-  - Simplifies external API interactions without requiring an additional service.
-
-### **2. AI Processing**
-- **Log Analysis Agent**
-  - Analyzes log data to extract insights and potential failure causes.
-  - Stores structured log findings in PostgreSQL.
-
-- **AI Agent (PydanticAI)**
-  - Processes troubleshooting queries using **LLM-based reasoning**.
-  - Retrieves historical data from the **Vector DB (Qdrant)**.
-
-### **3. Data Management (Managed Services)**
-- **Vector Database (Qdrant)**
-  - Stores structured logs and historical problem-solving insights for contextual retrieval.
-
-- **PostgreSQL RDS**
-  - Stores raw and processed log data.
-  - Serves as a relational database for system state tracking.
-
-### **4. Observability & Monitoring (Managed Services)**
-- **Prometheus Operator**
-  - Collects metrics and performance data from FaultMaven components.
-
-- **Amazon OpenSearch (Managed Elastic Stack)**
-  - Centralized logging for deep analysis of system behavior and debugging.
-
-### **5. CI/CD Pipeline**
-- **GitHub Actions**
-  - Automates code testing, container builds, and deployments.
-  - Pushes built container images to the **Container Registry**.
-
-- **Container Registry**
-  - Stores built container images for deployment.
-  - Kubernetes pulls these images for running services.
+### 2.2 Core Services & Containers
+| Service | Description | Deployment |
+|---------|------------|------------|
+| **Unified API & Processing Server** | Handles all user requests, processes logs/metrics, and generates AI recommendations. | Single containerized FastAPI service |
+| **Vector Database** | Stores short-term troubleshooting knowledge. | Hosted Pinecone / Qdrant |
+| **Relational Database** | Stores metadata and system logs. | PostgreSQL |
+| **Monitoring & Logging** | Observability tools for performance tracking. | Prometheus & OpenTelemetry |
+| **Reverse Proxy & Load Balancer** | Handles external API requests. | Nginx / Traefik |
 
 ---
 
-## Deployment Strategy
+## 3. Networking & Communication
 
-1. **Infrastructure as Code (IaC)**
-   - Deployment is automated via Terraform and Kubernetes manifests.
-   - All infrastructure components are defined in version-controlled configuration files.
+### 3.1 API Exposure & Routing
+- **External API Access**: FaultMaven exposes APIs via **Nginx reverse proxy**.
+- **Internal Communication**: All services communicate over **internal Kubernetes networking**.
 
-2. **Service Orchestration**
-   - Microservices are deployed as individual **Kubernetes pods**.
-   - Kubernetes **ingress controllers** manage traffic routing.
-
-3. **Scalability**
-   - **AI Processing** and **API Services** can autoscale based on demand.
-   - Kubernetes **Horizontal Pod Autoscaler (HPA)** manages scaling.
-
-4. **Security Best Practices**
-   - **Role-based access control (RBAC)** for Kubernetes services.
-   - **API authentication** using JWT tokens.
-   - **Data encryption** for logs and metrics.
+### 3.2 Inter-Component Communication  
+| Source | Destination | Protocol |
+|--------|------------|----------|
+| Web Client | Unified API Server | HTTPS |
+| API Server | Vector Database | REST API |
+| API Server | PostgreSQL | PostgreSQL Protocol |
+| **Adaptive Query Handler** | **Log & Metrics Analysis** | In-process Call |
+| **Adaptive Query Handler** | **AI Troubleshooting Module** | In-process Call |
+| **Log & Metrics Analysis** | **AI Troubleshooting Module** | In-process Call |
 
 ---
 
-## Future Enhancements
+## 4. Deployment Diagram (Updated with Grouped Containers)
 
-- **Auto-healing mechanisms** for failed services.
-- **Further optimization of AI inference speeds** for low-latency responses.
-- **Support for additional observability tools** as external API integrations.
+![System Architecture](diagrams/deployment_architecture.png)
 
 ---
 
-This document serves as the foundation for **FaultMaven’s production deployment strategy**. Any updates or modifications should be version-controlled and reviewed periodically.
+## 5. Deployment Strategy
 
+### 5.1 Initial Deployment (Monolithic Model)
+- The entire **Unified API Server** runs as a **single container** in **Kubernetes**.
+- All internal modules execute **in-process** (Adaptive Query Handler, Log Analysis, AI Processing).
+
+### 5.2 Future Scalability (Microservices)
+- If load increases, we can **split modules into separate services**.
+- AI Processing can be **offloaded to dedicated GPU nodes**.
+
+### 5.3 CI/CD Pipeline
+- **GitHub Actions** handles automated builds and testing.
+- **Docker images are deployed to a private container registry.**
+- **Kubernetes applies rolling updates with zero downtime.**
+
+---
+
+## 6. Conclusion
+
+This deployment architecture ensures that **FaultMaven is scalable, secure, and highly available**. The system is designed for **easy maintenance**, **flexible scaling**, and **robust security**, enabling engineers to troubleshoot production issues efficiently.

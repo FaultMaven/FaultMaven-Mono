@@ -1,18 +1,18 @@
 # FaultMaven
 
 ## 🚀 Introduction
-FaultMaven is an **AI-powered troubleshooting assistant** designed for **Engineers, SREs, and DevOps professionals**. It operates as a **browser-integrated companion**, dynamically analyzing logs, incident reports, and system documentation to provide **real-time insights and guided troubleshooting**.
+FaultMaven is an **AI-powered troubleshooting assistant** designed for **Engineers, SREs, and DevOps professionals**. It operates as a **browser-integrated companion**, dynamically analyzing logs, observability data, and incident reports to provide **real-time insights and guided troubleshooting**.
 
-By leveraging AI-driven analysis and historical context, FaultMaven **reduces incident resolution time**, minimizes **manual effort**, and enhances **reliability engineering workflows**.
+By leveraging AI-driven analysis and contextual awareness, FaultMaven **accelerates incident resolution**, minimizes **manual effort**, and enhances **reliability engineering workflows**.
 
 ---
 
 ## ✨ Key Features
-✔ **AI-Driven Root Cause Analysis** – Identifies patterns, anomalies, and dependencies in logs and system metrics.  
-✔ **Real-Time Log Parsing & Error Detection** – Extracts insights from structured/unstructured logs instantly.  
-✔ **Guided Troubleshooting Workflow** – Suggests next steps based on **historical data and best practices**.  
-✔ **Seamless Observability Integration** – Connects with tools like **Splunk, Datadog, and Prometheus**.  
-✔ **Interactive AI-Powered Assistant** – Provides **context-aware** recommendations and diagnostic insights.  
+✔ **AI-Driven Troubleshooting** – Provides **real-time recommendations** based on logs, metrics, and contextual analysis.  
+✔ **Dynamic Query Handling** – Supports **query-only**, **data-only**, and **combined** troubleshooting scenarios.  
+✔ **Log & Metrics Analysis** – Extracts key patterns and anomalies from structured and unstructured observability data.  
+✔ **AI-Assisted vs. Manual Control** – Users have full control over AI involvement in troubleshooting.  
+✔ **Session-Based Continuous Learning** – Adapts troubleshooting recommendations based on session interactions.  
 
 ---
 
@@ -21,7 +21,7 @@ By leveraging AI-driven analysis and historical context, FaultMaven **reduces in
 ### ✅ Prerequisites
 Ensure you have the following installed before setting up FaultMaven:
 - Python **3.10+**
-- Docker & Kubernetes (for deployment)
+- Docker (for containerized deployment)
 - Git (for version control)
 
 ### 🔧 Setup Instructions
@@ -42,8 +42,8 @@ python app/main.py
 
 Run with Docker:
 ```bash
-docker build -t faultmaven .
-docker run -p 8080:8080 faultmaven
+docker build -t faultmaven-mvp .
+docker run -p 8000:8000 faultmaven-mvp
 ```
 
 ---
@@ -65,10 +65,14 @@ We welcome contributions! To get started:
 
 ### 📂 Code Structure
 The project follows a **modular architecture**:
-- **`app/agents/`** – AI agents for troubleshooting & log analysis.
-- **`app/api.py`** – API endpoints powered by **FastAPI**.
-- **`app/data_manager.py`** – Handles data retrieval and processing.
-- **`app/logger.py`** – Centralized logging module.
+- **`app/`** – Core application modules.
+  - **`adaptive_query_handler.py`** – Processes user queries.
+  - **`log_metrics_analysis.py`** – Extracts insights from logs and metrics.
+  - **`ai_troubleshooting.py`** – Provides AI-generated troubleshooting recommendations.
+  - **`continuous_learning.py`** – Implements session-based learning.
+  - **`data_manager.py`** – Manages data normalization and input preprocessing.
+  - **`logger.py`** – Handles logging and debugging.
+  - **`api.py`** – Defines FastAPI endpoints for user interaction.
 - **`tests/`** – Unit and integration test suite.
 
 ### 🧪 Running Tests
@@ -80,16 +84,17 @@ pytest tests/
 ---
 
 ## 🏗 Architecture Overview
-FaultMaven is designed with a **scalable, containerized microservices architecture**:
+FaultMaven is designed with a **monolithic deployment model** (for MVP) with **modular components** that can later be scaled into microservices.
 
 ### 🎯 Core Components
-- **AI Agents** – Perform log analysis, context retrieval, and guided troubleshooting.
-- **Backend Services** – API gateway, data pipeline, and observability integrations.
-- **Browser Extension UI** – User interface for interacting with FaultMaven's insights.
-- **Storage** – PostgreSQL (for structured data), VectorDB (for historical context).
+- **Adaptive Query Handler** – Interprets user input and routes queries accordingly.
+- **Log & Metrics Analysis Module** – Extracts patterns and anomalies from observability data.
+- **AI Troubleshooting Module** – Generates guided troubleshooting recommendations.
+- **Continuous Learning Module** – Improves AI suggestions dynamically within a session.
+- **Unified API Server** – Serves FastAPI endpoints and integrates AI processing.
 
 ### 🏢 System Architecture Diagram
-![System Architecture](docs/diagrams/system-architecture.png)
+![System Architecture](docs/diagrams/system_architecture.png)
 
 For more details, see the [Architecture Documentation](docs/architecture.md).
 
@@ -102,9 +107,9 @@ This project is licensed under the **Apache 2.0 License** – see the [LICENSE](
 
 ## 🔮 Roadmap
 ✅ **MVP Release** – Core AI troubleshooting & log analysis  
-🚀 **Multi-Cloud Integration** – AWS, GCP, Azure support  
-🛡 **Enterprise Features** – Enhanced security & RBAC  
-🧠 **Advanced AI** – Context-aware troubleshooting improvements  
+🚀 **Cloud Integration** – AWS, GCP, Azure support  
+🛡 **Enterprise Features** – Advanced security & RBAC  
+🧠 **Improved AI** – Context-aware troubleshooting enhancements  
 
 Stay updated on our progress via the [Roadmap](docs/roadmap.md).
 

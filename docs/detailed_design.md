@@ -1,176 +1,200 @@
 # FaultMaven Detailed Design Document
 
-## 1. Overview
-FaultMaven is an AI-powered troubleshooting assistant designed to enhance the incident resolution process by analyzing logs, metrics, and monitoring data in real-time. This document details the system's architecture, AI agent responsibilities, data processing, API interactions, security considerations, and testing strategy.
+## 1. Introduction
+
+### Purpose
+This document provides an in-depth technical design for FaultMaven, detailing the implementation of each module, data structures, API specifications, processing workflows, error handling strategies, security measures, and testing strategies.
+
+### Scope
+FaultMaven is an AI-powered troubleshooting assistant that processes observability data and provides real-time, context-aware insights. This document covers:
+
+- **Unified API & Query Handler**
+- **Data Normalization Module**
+- **Log & Metrics Analysis Module**
+- **AI Troubleshooting Module**
+- **Continuous Learning Module**
+- **Observability & Monitoring Layer**
+- **Security & CI/CD Strategy**
+
+### Intended Audience
+This document is intended for software engineers, architects, and developers involved in the implementation and maintenance of FaultMaven.
 
 ---
 
-## 2. System Architecture
-FaultMaven follows a **modular microservices architecture**, ensuring **scalability**, **fault tolerance**, and **real-time troubleshooting capabilities**. 
+## 2. System Overview
 
-### **2.1 High-Level Architecture**
-The architecture consists of the following key layers:
-1. **User Interface (UI Layer)** – Browser extension to capture troubleshooting context.
-2. **API Layer** – FastAPI Gateway to manage user interactions.
-3. **AI Processing Layer** – AI agents for log analysis, troubleshooting, and context retrieval.
-4. **Data Management Layer** – PostgreSQL for structured data and VectorDB for historical troubleshooting knowledge.
-5. **Observability & Monitoring Layer** – Prometheus and OpenSearch for logging and performance monitoring.
-6. **Deployment Layer** – Kubernetes-based deployment for scalability.
+### High-Level Architecture
+FaultMaven consists of a **monolithic process** that handles all API requests from the web browser, processes observability data, and returns actionable troubleshooting insights. The key components are:
 
-🚀 **Refer to the [System Architecture Document](./diagrams/system-architecture.png) for a visual overview.**
+1. **Adaptive Query Handler** – Determines request type and routes it accordingly.
+2. **Data Normalization Module** – Converts logs, metrics, and traces into a standardized format.
+3. **Log & Metrics Analysis Module** – Extracts patterns and detects anomalies.
+4. **AI Troubleshooting Module** – Generates troubleshooting recommendations using an LLM.
+5. **Continuous Learning Module** – Adjusts recommendations based on user feedback.
+6. **Observability & Monitoring Layer** – Logs API requests, tracks AI responses, and monitors system health.
 
----
-
-## 3. AI Agent Responsibilities
-FaultMaven’s AI agents process troubleshooting data dynamically.
-
-### **3.1 Query Router**
-- Routes queries to the appropriate AI agent based on context.
-- Ensures efficient processing of user requests.
-
-### **3.2 Log Analysis Agent**
-- Processes structured and unstructured logs.
-- Extracts insights using machine learning-based anomaly detection.
-- Integrates with **observability tools** such as **Splunk, Datadog, and Prometheus**.
-
-### **3.3 Troubleshooting Agent**
-- Uses AI reasoning to suggest root causes and guided investigation steps.
-- Offers diagnostic commands for deeper troubleshooting.
-- Prioritizes suggestions based on past successful resolutions.
-
-### **3.4 Context Retrieval Agent**
-- Retrieves **historical troubleshooting records** from VectorDB.
-- Provides recommendations based on past **similar incidents**.
+### Technology Stack
+- **Backend:** FastAPI (Python)
+- **AI Processing:** OpenAI GPT-4 / PyLandicAI
+- **Log Processing:** Elasticsearch, OpenSearch
+- **Database:** PostgreSQL & Pinecone (Vector DB)
+- **Monitoring & Tracing:** Prometheus, OpenTelemetry
+- **Security:** OAuth2 Authentication, AES-256 Encryption
+- **Deployment:** Docker, Kubernetes
 
 ---
 
-## 4. Data Flow & Processing
-FaultMaven processes logs, metrics, and observability data **dynamically** as incidents occur.
+## 3. User Interaction Flow
 
-### **4.1 Data Ingestion**
-- Accepts **log files**, **pasted logs**, **monitoring data**, and **API integrations**.
-- Uses **Kafka Stream Processing** for real-time ingestion.
-- Supports **structured (JSON, CSV) and unstructured (text, logs)** formats.
+### Overview
+FaultMaven’s troubleshooting workflow consists of six stages:
 
-### **4.2 Preprocessing Pipeline**
-- Normalizes log formats to maintain consistency.
-- Filters irrelevant data while retaining meaningful troubleshooting information.
+1. **User submits a troubleshooting request** (query-only, data-only, or both).
+2. **API receives the request** and forwards it to the **Adaptive Query Handler**.
+3. **Data Processing Modules analyze input** (logs, metrics, traces).
+4. **AI Troubleshooting Module synthesizes results** and generates recommendations.
+5. **User receives a structured response** with actionable insights.
+6. **User feedback is collected** to refine recommendations (Continuous Learning Module).
 
-### **4.3 AI-Driven Analysis**
-- Queries AI agents to **extract insights** and **provide recommendations**.
-- Utilizes **Retrieval-Augmented Generation (RAG)** for enhanced context awareness.
-
-### **4.4 User Feedback Loop**
-- Learns from **resolved incidents** to improve AI suggestions.
-- Refines AI troubleshooting logic based on user actions.
-
----
-
-## 5. API Specifications
-FaultMaven exposes a **FastAPI-powered REST API** for user interactions.
-
-### **5.1 API Endpoints**
-| Endpoint              | Method | Description |
-|-----------------------|--------|-------------|
-| `/query`             | POST   | Accepts troubleshooting questions and routes them to AI agents. |
-| `/logs/analyze`      | POST   | Processes logs and extracts key insights. |
-| `/context/retrieve`  | GET    | Fetches historical troubleshooting data. |
-| `/suggestions`       | GET    | Returns next-step troubleshooting actions. |
-
-### **5.2 User Interaction Flow**
+### Sequence Diagram
 ```mermaid
 sequenceDiagram
     participant User
-    participant Browser_Extension
-    participant FastAPI_Gateway
-    participant Query_Router
-    participant AI_Agents
-    participant Storage
+    participant Web_UI
+    participant API_Server
+    participant Query_Handler
+    participant Log_Metrics_Analysis
+    participant AI_Troubleshooter
+    participant Continuous_Learning
 
-    User ->> Browser_Extension: Submit troubleshooting query
-    Browser_Extension ->> FastAPI_Gateway: Send request
-    FastAPI_Gateway ->> Query_Router: Route request
-    Query_Router ->> AI_Agents: Analyze logs & suggest solutions
-    AI_Agents ->> Storage: Retrieve historical data
-    Storage ->> AI_Agents: Provide relevant insights
-    AI_Agents ->> Query_Router: Return AI-generated suggestions
-    Query_Router ->> FastAPI_Gateway: Send structured response
-    FastAPI_Gateway ->> Browser_Extension: Display recommendations
-    Browser_Extension ->> User: Show insights and next steps
+    User ->> Web_UI: Submit troubleshooting query (with or without data)
+    Web_UI ->> API_Server: Send API request (query + logs/metrics)
+    API_Server ->> Query_Handler: Process request type
+    Query_Handler ->> Log_Metrics_Analysis: Analyze logs & metrics
+    Query_Handler ->> AI_Troubleshooter: Generate troubleshooting insights
+    AI_Troubleshooter ->> Continuous_Learning: Store user feedback & session learning
+    AI_Troubleshooter ->> API_Server: Return recommendations
+    API_Server ->> Web_UI: Display insights & next steps
+    Web_UI ->> User: Show troubleshooting response
 ```
 
+### Detailed Breakdown
+
+#### **1. User Request Submission**
+- User enters a troubleshooting query through the **FaultMaven web interface**.
+- The user may optionally provide logs, monitoring data, or traces.
+
+#### **2. API Processing**
+- The **Unified API Server** receives the request.
+- The **Adaptive Query Handler** determines whether the request is:
+  - **Query-only** (text-based query with no logs/metrics).
+  - **Data-only** (logs or metrics but no query).
+  - **Query + Data** (both provided).
+
+#### **3. Data Processing & Analysis**
+- If observability data is provided, the **Log & Metrics Analysis Module** extracts patterns, anomalies, and correlations.
+
+#### **4. AI Troubleshooting Module Execution**
+- The AI model (GPT-4 via **PyLandicAI**) generates **context-aware troubleshooting guidance**.
+- If **similar past issues exist**, relevant insights are retrieved from the **Vector Database**.
+
+#### **5. Response Delivery**
+- The system generates a **structured response** with:
+  - **Suggested next steps** for troubleshooting.
+  - **Contextual insights** from past cases.
+  - **Potential root causes** based on log and metrics analysis.
+
+#### **6. User Feedback & Continuous Learning**
+- The **Continuous Learning Module** collects **user feedback** (accept/reject recommendations).
+- This feedback is used **within the same session** to refine responses dynamically.
+
 ---
 
-## 6. Database Schema & Data Model
-### **6.1 PostgreSQL (Structured Data)**
-- Stores **incident reports, log analysis results, troubleshooting recommendations**.
-- Key Tables:
-  - `incidents`: Stores metadata about incidents.
-  - `logs`: Stores structured log entries.
-  - `recommendations`: Tracks AI-generated troubleshooting suggestions.
+## 4. API Design & Endpoints
 
-### **6.2 Vector Database (Knowledge Retrieval)**
-- Stores **historical troubleshooting insights**.
-- Enables **semantic search** for similar past incidents.
-- Indexing powered by **Qdrant or Pinecone**.
+### 4.1 Unified API & Query Handler
+Handles all requests from the web client.
+
+- **Endpoint:** `/api/query`
+- **Request Example (JSON)**
+  ```json
+  {
+      "user_id": "user_001",
+      "query": "Why is my server CPU usage spiking?",
+      "logs": ["Error: CPU threshold exceeded at 90%"],
+      "metrics": {"cpu_usage": 92, "memory_usage": 78}
+  }
+  ```
+- **Response Example**
+  ```json
+  {
+      "recommendations": [
+          "Check active processes using top or htop.",
+          "Investigate recent deployments for performance regressions."
+      ]
+  }
+  ```
 
 ---
 
-## 7. Security & Access Control
-### **7.1 Authentication & Authorization**
+## 5. Component Design & Processing Logic
+
+### 5.1 Adaptive Query Handler
+- **Determines request type (query-only, data-only, or combined).**
+- **Routes request to the appropriate processing module.**
+
+### 5.2 Data Normalization Module
+- **Converts all incoming data into a standardized format.**
+
+### 5.3 Log & Metrics Analysis Module
+- **Uses statistical and ML-based methods to detect anomalies.**
+
+### 5.4 AI Troubleshooting Module
+- **Retrieves context from the vector database.**
+- **Uses an LLM (GPT-4 via PyLandicAI) to generate recommendations.**
+
+### 5.5 Continuous Learning Module
+- **Implements session-based learning using real-time feedback.**
+
+---
+
+## 6. Security & Access Control
+
+### 6.1 Authentication & Authorization
 - **OAuth2-based API Authentication** for secure user access.
 - **Role-Based Access Control (RBAC)** to restrict access levels.
 
-### **7.2 Data Encryption**
+### 6.2 Data Encryption
 - **AES-256 encryption** for stored log data.
 - **TLS 1.2+ encryption** for API communication.
 
-### **7.3 Logging & Auditing**
+### 6.3 Logging & Auditing
 - Secure audit logs to track **user actions and system events**.
 
 ---
 
-## 8. Error Handling & Observability
-### **8.1 Logging Strategy**
-- **Structured logging** for all API calls and AI model outputs.
-- **Log levels**: DEBUG, INFO, WARNING, ERROR.
+## 7. CI/CD Pipeline & Testing Strategy
 
-### **8.2 Monitoring & Tracing**
-- **Prometheus**: Real-time metrics collection.
-- **OpenTelemetry**: Distributed tracing for request tracking.
-
----
-
-## 9. CI/CD Pipeline & Development Workflow
-### **9.1 Automated Testing**
+### 7.1 Automated Testing
 - **Unit tests** for individual AI agents.
 - **Integration tests** for API endpoints.
 - **End-to-end tests** using **Postman or Pytest**.
 
-### **9.2 CI/CD Workflow**
+### 7.2 CI/CD Workflow
 - **GitHub Actions** for automated builds and deployments.
 - **Kubernetes-managed containerized deployments**.
 
 ---
 
-## 10. Testing Strategy
-### **10.1 Unit Testing**
-- Test AI agent logic using **Pytest**.
-- Validate log analysis results against mock datasets.
+## 8. Future Enhancements
 
-### **10.2 Integration Testing**
-- Verify API functionality and interactions.
-
-### **10.3 Performance Testing**
-- Measure AI agent response time and database query efficiency.
+- **Multimodal Input Support:** Screenshots and configuration files.
+- **LLM Fine-Tuning:** Training on real-world logs.
+- **On-Prem Deployments:** Cloud and self-hosted options.
 
 ---
 
-## 11. Deployment Architecture
-🚀 The **Deployment Architecture** is documented separately.  
-Refer to the **[Deployment Architecture Document](./deployment_architecture.md)**.
+## 9. Conclusion
 
----
+This document provides the detailed technical specifications for FaultMaven’s architecture and processing logic. It ensures that every user request is processed efficiently in real time via a unified backend, with intelligent, adaptive troubleshooting and session-based continuous learning.
 
-## 12. Conclusion
-FaultMaven is engineered to be **scalable, secure, and intelligent**, assisting engineers in resolving incidents faster and more effectively. The modular architecture, AI-driven insights, and robust observability make it a powerful tool for troubleshooting production issues. 🚀
