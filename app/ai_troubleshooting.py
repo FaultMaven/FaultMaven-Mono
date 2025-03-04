@@ -1,0 +1,138 @@
+"""
+ai_troubleshooting.py - AI-Powered Troubleshooting Module
+
+This module integrates:
+- **LLM-based analysis** (OpenAI, Anthropic, Mistral, Hugging Face).
+- **Structured troubleshooting workflows** for diagnosing issues.
+
+Responsibilities:
+1️⃣ **Synthesizes Query + Observability Insights**
+   - Accepts **user queries** and **logs/metrics** for context-aware analysis.
+   - Structures logs into a digestible format for the LLM.
+
+2️⃣ **LLM-Based Troubleshooting**
+   - Constructs structured prompts to guide AI for reliable, actionable output.
+   - Routes queries dynamically to the configured LLM provider.
+
+3️⃣ **Structured Response Processing**
+   - Parses the LLM’s response into a structured format.
+   - Extracts root cause hypotheses and next steps for actionability.
+"""
+
+import re
+from app.logger import logger
+from app.llm_provider import LLMProvider
+from typing import Dict, List, Any, Optional
+
+
+def troubleshoot_issue(analysis_results: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Uses AI to generate troubleshooting recommendations based on log analysis.
+
+    Args:
+        analysis_results (dict): Insights from log analysis.
+
+    Returns:
+        dict: Suggested troubleshooting steps and potential root causes.
+    """
+    if not analysis_results or not isinstance(analysis_results, dict):
+        return {"error": "Invalid or missing analysis data provided"}
+
+    # Construct structured prompt
+    prompt = generate_troubleshooting_prompt(analysis_results)
+
+    # Query the LLM and parse the response
+    try:
+        response = LLMProvider().query(prompt)
+        parsed_response = parse_llm_response(response)
+
+        if not parsed_response["next_steps"]:
+            return {"error": "LLM response did not provide actionable next steps"}
+
+        return parsed_response
+    except Exception as e:
+        logger.error(f"❌ LLM Query Failed: {str(e)}")
+        return {"error": "AI troubleshooting failed", "details": str(e)}
+
+
+def generate_troubleshooting_prompt(analysis_results: Dict[str, Any]) -> str:
+    """
+    Converts structured log insights into a query-friendly format for the LLM.
+
+    Args:
+        analysis_results (dict): Insights from log analysis.
+
+    Returns:
+        str: A formatted troubleshooting prompt for the LLM.
+    """
+    log_summary = analysis_results.get("summary", "No detailed summary available")
+    anomalies = analysis_results.get("anomalies", [])
+
+    prompt = f"""
+    You are a system troubleshooting assistant. Analyze the following logs
+    and identify the most probable root causes and necessary next steps.
+
+    **Log Summary:**
+    {log_summary}
+
+    **Detected Anomalies:**
+    {', '.join(anomalies) if anomalies else 'No anomalies detected'}
+
+    **Response Format (STRICT)**
+    - **Root Cause:** <Brief description>
+    - **Next Steps:**
+      1. <Step 1>
+      2. <Step 2>
+      3. <Step 3> (Minimum 3 steps)
+    """
+    return prompt.strip()
+
+
+def parse_llm_response(response: Any) -> Dict[str, Any]:
+    """Parses the LLM response into structured troubleshooting steps."""
+    if isinstance(response, list) and response and response[0].get("generated_text"):
+        response_text = response[0].get("generated_text", "").strip()
+    elif isinstance(response, str):
+        response_text = response.strip()
+    else:
+        return {"likely_cause": "Unknown", "next_steps": ["No specific next steps provided."]}
+
+    # ✅ Extract only the **first line** after "Root Cause:" or "Likely root cause:"
+    cause_match = re.search(r"(?:Root Cause|Likely root cause):\s*(.+?)(?:\. Next Steps:|\n|$)", response_text, re.DOTALL)
+
+    # ✅ Extract numbered next steps
+    next_steps_match = re.findall(r"^\d+\.\s(.+)", response_text, re.MULTILINE)
+
+    likely_cause = cause_match.group(1).strip() if cause_match else "Unknown"
+
+    if isinstance(response, str) and (cause_match is None and not next_steps_match):
+        return {"likely_cause": "Unknown", "next_steps": ["No specific next steps provided."]}
+
+    return {"likely_cause": likely_cause, "next_steps": next_steps_match or []}
+
+
+# Future Implementation Placeholders
+def retrieve_past_cases(issue_description: str) -> Dict[str, str]:
+    """
+    Placeholder for retrieving past troubleshooting cases.
+
+    Args:
+        issue_description (str): The current issue being diagnosed.
+
+    Returns:
+        dict: Relevant past cases (to be implemented).
+    """
+    return {"message": "Retrieving past cases is not implemented yet."}
+
+
+def suggest_follow_up_questions(analysis_results: Dict[str, Any]) -> List[str]:
+    """
+    Placeholder for generating intelligent follow-up questions.
+
+    Args:
+        analysis_results (dict): Insights from log analysis.
+
+    Returns:
+        list: Suggested follow-up questions (to be implemented).
+    """
+    return ["What were the most recent configuration changes?", "Are there related alerts in the monitoring system?"]

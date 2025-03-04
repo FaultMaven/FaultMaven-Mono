@@ -1,0 +1,109 @@
+/* General styles */
+body {
+  font-family: "Inter", sans-serif;
+  background-color: #f4f4f4;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* Sidebar Mode */
+.sidebar-mode {
+  width: 100%;
+  max-width: 100%;
+  height: 100vh;
+  background: #ffffff;
+  border-left: 3px solid #ddd;
+  box-shadow: -3px 0 10px rgba(0, 0, 0, 0.15);
+  border-radius: 8px 0 0 8px;
+  display: flex;
+  flex-direction: column;
+  padding: 15px;
+  overflow-y: auto;
+}
+
+/* Sidebar Header */
+.sidebar-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: #007bff;
+  color: white;
+  padding: 15px;
+  border-radius: 6px;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+/* Input container */
+.input-container {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 15px;
+  padding: 8px;
+}
+
+.input-container label {
+  font-weight: bold;
+  margin-bottom: 5px;
+  color: #333;
+}
+
+.input-container textarea {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid #ccc;
+  border-radius: 5px;
+  font-size: 14px;
+  resize: vertical;
+  background: #f8f8f8;
+}
+
+/* Submit Button */
+button {
+  width: 100%;
+  padding: 12px;
+  font-size: 16px;
+  background-color: #007bff;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: bold;
+  transition: background 0.3s ease-in-out;
+}
+
+button:hover {
+  background-color: #0056b3;
+}
+
+/* Response Container */
+.response-container {
+  flex-grow: 1;
+  background: #eef;
+  padding: 12px;
+  border-radius: 6px;
+  border: 1px solid #ccc;
+  font-size: 14px;
+  color: #333;
+  overflow-y: auto;
+  min-height: 150px;
+  max-height: 400px;
+}
+
+/* Close Sidebar Button */
+.close-sidebar {
+  background: none;
+  border: none;
+  color: white;
+  font-size: 18px;
+  cursor: pointer;
+  font-weight: bold;
+  transition: opacity 0.3s;
+}
+
+.close-sidebar:hover {
+  opacity: 0.7;
+}
