@@ -1,23 +1,28 @@
 """
 query_processing.py - Query Processing & API Server
+
 This module acts as the entry point for the FaultMaven system, handling API requests
 and routing them to the appropriate backend modules. It does **not** perform troubleshooting
 or log analysis directly but ensures that each request is properly classified and routed.
+
 ## Responsibilities:
+
 1️⃣ **Classify User Requests** - Determines whether a request is **"query-only"**, **"data-only"**, or **"combined"**.
 2️⃣ **Validate & Normalize Input** - Ensures at least one valid field (`query` or `logs`) is provided.
   - Normalizes observability data (logs, metrics) before processing.
 3️⃣ **Route Requests to Backend Modules** - Queries → **AI Troubleshooting Module** - Logs → **Log Analysis Module** - Combined Queries & Logs → **Both**
 4️⃣ **Handle User Feedback** - Captures and forwards feedback to **Continuous Learning Module**.
   - Ensures structured feedback processing.
+
 This module ensures efficient query processing, structured insights, and seamless request routing.
 """
+
 from fastapi import FastAPI, Body, HTTPException
 from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, Dict, Any
 from app.logger import logger
 from app.log_metrics_analysis import analyze_logs_metrics
-from app.ai_troubleshooting import troubleshoot_issue
+from app.ai_troubleshooting import process_query, process_query_with_logs
 from app.continuous_learning import update_session_learning
 from app.data_manager import normalize_data
 from fastapi.staticfiles import StaticFiles
@@ -63,10 +68,6 @@ def process_logs(logs: str) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail="Invalid log format.")
     return analyze_logs_metrics(log_text)
 
-def process_query(query: str, log_insights: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """Processes a query with optional log insights."""
-    return troubleshoot_issue({"query": query, "log_insights": log_insights})
-
 ### **🔹 API Endpoints**
 @app.post("/query")
 async def handle_query(request: QueryRequest = Body(default={})) -> Dict[str, Any]:
@@ -88,13 +89,13 @@ async def handle_query(request: QueryRequest = Body(default={})) -> Dict[str, An
 
         # **Case 2: Query Only**
         if request.query and not request.logs:
-            response = process_query(request.query)
+            response = process_query(request.query) # Corrected function call
             logger.info(f"Query Processed: {request.query} -> {response}")
             return {"response": response}
 
         # **Case 3: Query + Logs**
         log_insights = process_logs(request.logs)
-        response = process_query(request.query, log_insights)
+        response = process_query_with_logs(request.query, log_insights) # Corrected function call
         logger.info(f"Query & Logs Processed: {request.query} -> {response}")
         return {"response": response}
 

@@ -70,19 +70,19 @@ class LLMProvider:
         else:
             raise ValueError(f"❌ Unsupported LLM provider: {self.provider}")
 
-    def _query_openai(self, prompt: str) -> str:
+    def _query_openai(self, prompt: str) -> dict:
         """Handles OpenAI API calls."""
         try:
             response = openai.chat.completions.create(
                 model=self.model,
                 messages=[{"role": "user", "content": prompt}],
             )
-            return response.choices[0].message.content
+            return [{"generated_text": response.choices[0].message.content}]
         except openai.OpenAIError as e:
             logger.error(f"❌ OpenAI Query Failed: {e}")
-            return {"error": "OpenAI query failed", "details": str(e)}
+            return [{"generated_text": f"OpenAI query failed: {e}"}]
 
-    def _query_anthropic(self, prompt: str) -> str:
+    def _query_anthropic(self, prompt: str) -> dict:
         """Handles Anthropic API calls."""
         try:
             headers = {
@@ -96,14 +96,14 @@ class LLMProvider:
 
             if response.status_code != 200:
                 logger.error(f"❌ Anthropic API Error: {response_json}")
-                return {"error": "Anthropic query failed", "details": response_json}
+                return [{"generated_text": f"Anthropic query failed: {response_json}"}]
 
-            return response_json["content"]
+            return [{"generated_text": response_json["content"]["text"]}]
         except requests.RequestException as e:
             logger.error(f"❌ Anthropic Query Failed: {e}")
-            return {"error": "Anthropic query failed", "details": str(e)}
+            return [{"generated_text": f"Anthropic query failed: {e}"}]
 
-    def _query_huggingface(self, prompt: str) -> str:
+    def _query_huggingface(self, prompt: str) -> dict:
         """Handles Hugging Face API calls."""
         try:
             headers = {
@@ -115,21 +115,21 @@ class LLMProvider:
             response = requests.post(f"{self.api_url}{self.model}", json=payload, headers=headers)
 
             # DEBUG: Print raw response
-            logger.info(f"🔍 Hugging Face Raw Response: {response.status_code} - {response.text}")
+            logger.debug(f"🔍 Hugging Face Full Response: {response.status_code} - {response.text}")
 
             response_json = response.json()
 
             if response.status_code != 200:
                 logger.error(f"❌ Hugging Face API Error: {response_json}")
-                return {"error": "Hugging Face query failed", "details": response_json}
+                return [{"generated_text": f"Hugging Face query failed: {response_json}"}]
 
-            return response_json[0]["generated_text"]
+            return [{"generated_text": response_json[0]["generated_text"]}]
 
         except requests.RequestException as e:
             logger.error(f"❌ Hugging Face Query Failed: {e}")
-            return {"error": "Hugging Face query failed", "details": str(e)}
+            return [{"generated_text": f"Hugging Face query failed: {e}"}]
 
-    def _query_mistral(self, prompt: str) -> str:
+    def _query_mistral(self, prompt: str) -> dict:
         """Handles Mistral API calls."""
         try:
             headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
@@ -139,14 +139,14 @@ class LLMProvider:
 
             if response.status_code != 200:
                 logger.error(f"❌ Mistral API Error: {response_json}")
-                return {"error": "Mistral query failed", "details": response_json}
+                return [{"generated_text": f"Mistral query failed: {response_json}"}]
 
-            return response_json["choices"][0]["message"]["content"]
+            return [{"generated_text": response_json["choices"][0]["message"]["content"]}]
         except requests.RequestException as e:
             logger.error(f"❌ Mistral Query Failed: {e}")
-            return {"error": "Mistral query failed", "details": str(e)}
+            return [{"generated_text": f"Mistral query failed: {e}"}]
 
-    def _query_deepseek(self, prompt: str) -> str:
+    def _query_deepseek(self, prompt: str) -> dict:
         """Handles DeepSeek API calls."""
         try:
             headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
@@ -156,11 +156,11 @@ class LLMProvider:
 
             if response.status_code != 200:
                 logger.error(f"❌ DeepSeek API Error: {response_json}")
-                return {"error": "DeepSeek query failed", "details": response_json}
+                return [{"generated_text": f"DeepSeek query failed: {response_json}"}]
 
-            return response_json["choices"][0]["message"]["content"]
+            return [{"generated_text": response_json["choices"][0]["message"]["content"]}]
         except requests.RequestException as e:
             logger.error(f"❌ DeepSeek Query Failed: {e}")
-            return {"error": "DeepSeek query failed", "details": str(e)}
-
+            return [{"generated_text": f"DeepSeek query failed: {e}"}]
+        
 

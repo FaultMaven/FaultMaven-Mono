@@ -20,40 +20,59 @@ Responsibilities:
 """
 
 import re
+import json
+from typing import Dict, List, Any, Optional
 from app.logger import logger
 from app.llm_provider import LLMProvider
-from typing import Dict, List, Any, Optional
 
-
-def troubleshoot_issue(analysis_results: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Uses AI to generate troubleshooting recommendations based on log analysis.
-
-    Args:
-        analysis_results (dict): Insights from log analysis.
-
-    Returns:
-        dict: Suggested troubleshooting steps and potential root causes.
-    """
-    if not analysis_results or not isinstance(analysis_results, dict):
-        return {"error": "Invalid or missing analysis data provided"}
-
-    # Construct structured prompt
-    prompt = generate_troubleshooting_prompt(analysis_results)
-
-    # Query the LLM and parse the response
+def query_llm(prompt: str) -> Any:
+    """Query the LLM."""
     try:
-        response = LLMProvider().query(prompt)
+        return LLMProvider().query(prompt)
+    except Exception as e:
+        logger.error(f"LLM query failed: {e}")
+        raise
+
+def process_query(query: str) -> str:
+    """Handles query-only requests."""
+    try:
+        response = query_llm(query)
+        # Extract text from LLM response
+        if isinstance(response, list) and response and isinstance(response[0], dict) and "generated_text" in response[0]:
+            response_text = response[0]["generated_text"]
+            # Extract root cause from the response
+            cause_match = re.search(r"(?:Root Cause|Likely root cause):\s*(.+?)(?:\. Next Steps:|\n|$)", response_text, re.DOTALL)
+            if cause_match:
+                # Clean up the root cause text
+                likely_cause = cause_match.group(1).strip().replace("**", "").strip()
+                return likely_cause
+            else:
+                return "Unknown"
+        else:
+            logger.error(f"Unexpected LLM response format: {response}")
+            return "Error: Unexpected LLM response format."
+    except Exception as e:
+        logger.error(f"LLM Query Failed: {e}")
+        return f"Error: LLM query failed: {e}"
+
+def process_query_with_logs(query: str, log_insights: Dict[str, Any]) -> Dict[str, Any]:
+    """Handles query + logs requests."""
+    try:
+        # Construct structured prompt
+        prompt = generate_troubleshooting_prompt(log_insights)
+
+        # Query the LLM and parse the response
+        response = query_llm(prompt)
         parsed_response = parse_llm_response(response)
 
         if not parsed_response["next_steps"]:
+            logger.warning("⚠️ LLM response did not provide actionable next steps.")
             return {"error": "LLM response did not provide actionable next steps"}
 
         return parsed_response
     except Exception as e:
-        logger.error(f"❌ LLM Query Failed: {str(e)}")
-        return {"error": "AI troubleshooting failed", "details": str(e)}
-
+        logger.error(f"AI troubleshooting failed: {e}")
+        return {"error": f"Error: AI troubleshooting failed: {e}"}
 
 def generate_troubleshooting_prompt(analysis_results: Dict[str, Any]) -> str:
     """
@@ -78,15 +97,23 @@ def generate_troubleshooting_prompt(analysis_results: Dict[str, Any]) -> str:
     **Detected Anomalies:**
     {', '.join(anomalies) if anomalies else 'No anomalies detected'}
 
-    **Response Format (STRICT)**
+    **Response Format (STRICT):**
     - **Root Cause:** <Brief description>
     - **Next Steps:**
       1. <Step 1>
       2. <Step 2>
       3. <Step 3> (Minimum 3 steps)
+
+    **Example Response (Even without detailed information):**
+    - **Root Cause:** General API connectivity issue
+    - **Next Steps:**
+      1. Check network connectivity.
+      2. Review API service status.
+      3. Examine recent deployment changes.
+
+    Provide a response even if detailed log information is unavailable.
     """
     return prompt.strip()
-
 
 def parse_llm_response(response: Any) -> Dict[str, Any]:
     """Parses the LLM response into structured troubleshooting steps."""
@@ -97,19 +124,27 @@ def parse_llm_response(response: Any) -> Dict[str, Any]:
     else:
         return {"likely_cause": "Unknown", "next_steps": ["No specific next steps provided."]}
 
-    # ✅ Extract only the **first line** after "Root Cause:" or "Likely root cause:"
-    cause_match = re.search(r"(?:Root Cause|Likely root cause):\s*(.+?)(?:\. Next Steps:|\n|$)", response_text, re.DOTALL)
+    # Log the LLM response text for debugging
+    logger.debug(f"LLM Response Text: {response_text}")
 
-    # ✅ Extract numbered next steps
+    # Try to parse as JSON first
+    try:
+        parsed_json = json.loads(response_text)
+        if isinstance(parsed_json, dict) and "likely_cause" in parsed_json and "next_steps" in parsed_json:
+            return parsed_json
+    except json.JSONDecodeError:
+        pass
+
+    # Fallback to regex parsing
+    cause_match = re.search(r"(?:Root Cause|Likely root cause):\s*(.+?)(?:\. Next Steps:|\n|$)", response_text, re.DOTALL)
     next_steps_match = re.findall(r"^\d+\.\s(.+)", response_text, re.MULTILINE)
 
     likely_cause = cause_match.group(1).strip() if cause_match else "Unknown"
+    # Clean up the root cause text
+    likely_cause = likely_cause.replace("**", "").strip()
+    next_steps = next_steps_match or ["No specific next steps provided."]
 
-    if isinstance(response, str) and (cause_match is None and not next_steps_match):
-        return {"likely_cause": "Unknown", "next_steps": ["No specific next steps provided."]}
-
-    return {"likely_cause": likely_cause, "next_steps": next_steps_match or []}
-
+    return {"likely_cause": likely_cause, "next_steps": next_steps}
 
 # Future Implementation Placeholders
 def retrieve_past_cases(issue_description: str) -> Dict[str, str]:
@@ -123,7 +158,6 @@ def retrieve_past_cases(issue_description: str) -> Dict[str, str]:
         dict: Relevant past cases (to be implemented).
     """
     return {"message": "Retrieving past cases is not implemented yet."}
-
 
 def suggest_follow_up_questions(analysis_results: Dict[str, Any]) -> List[str]:
     """
