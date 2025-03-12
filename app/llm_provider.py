@@ -1,59 +1,31 @@
-import os
 import requests
 import openai
 from app.logger import logger
-from dotenv import load_dotenv
+from config.settings import settings
+from typing import Any
 
-# Load environment variables from .env file
-load_dotenv()
 
-# Get selected LLM provider
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openai").lower()
-
-# API Keys
-API_KEYS = {
-    "openai": os.getenv("OPENAI_API_KEY"),
-    "anthropic": os.getenv("ANTHROPIC_API_KEY"),
-    "mistral": os.getenv("MISTRAL_API_KEY"),
-    "deepseek": os.getenv("DEEPSEEK_API_KEY"),
-    "huggingface": os.getenv("HUGGINGFACE_API_KEY"),
-}
-
-# Models per provider
-LLM_MODELS = {
-    "openai": os.getenv("OPENAI_MODEL", "gpt-4o"),
-    "anthropic": os.getenv("ANTHROPIC_MODEL", "claude-3-opus"),
-    "mistral": os.getenv("MISTRAL_MODEL", "mistralai/Mistral-7B-Instruct-v0.1"),
-    "deepseek": os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
-    "huggingface": os.getenv("HUGGINGFACE_MODEL", "tiiuae/falcon-7b-instruct"),
-}
-
-# API URLs for non-OpenAI models
-API_URLS = {
-    "deepseek": "https://api.deepseek.com/v1/chat/completions",
-    "mistral": "https://api.mistral.ai/v1/chat/completions",
-    "anthropic": "https://api.anthropic.com/v1/messages",
-    "huggingface": "https://api-inference.huggingface.co/models/",
-}
-
+class LLMParsingError(Exception):
+    """Custom exception for LLM response parsing errors."""
+    pass
 
 class LLMProvider:
     """Unified interface for different LLM providers."""
 
     def __init__(self):
-        self.provider = LLM_PROVIDER
-        self.api_key = API_KEYS.get(self.provider)
-        self.model = LLM_MODELS.get(self.provider)
-        self.api_url = API_URLS.get(self.provider)
+        self.provider = settings.llm_provider
+        self.api_key = getattr(settings, f"{self.provider}_api_key")
+        self.model = getattr(settings, f"{self.provider}_model")
+        self.api_url = getattr(settings, f"{self.provider}_api_url", None) # Default to None if not specified
 
-        if not self.api_key and self.provider != "huggingface":  # Hugging Face allows some public models
-            raise ValueError(f"❌ Missing API key for {self.provider}. Set the correct environment variable.")
+        if not self.api_key and self.provider != "huggingface":
+            raise ValueError(f"Missing API key for {self.provider}. Set the correct environment variable.")
 
         if not self.model:
-            raise ValueError(f"❌ Missing model for {self.provider}. Set the correct environment variable.")
+            raise ValueError(f"Missing model for {self.provider}. Set the correct environment variable.")
 
-        logger.info(f"✅ Using LLM Provider: {self.provider}")
-        logger.info(f"✅ Using LLM Model: {self.model}")
+        logger.info(f"Using LLM Provider: {self.provider}")
+        logger.info(f"Using LLM Model: {self.model}")
 
     def query(self, prompt: str):
         """Routes query to the selected LLM provider."""
@@ -68,21 +40,22 @@ class LLMProvider:
         elif self.provider == "huggingface":
             return self._query_huggingface(prompt)
         else:
-            raise ValueError(f"❌ Unsupported LLM provider: {self.provider}")
+            raise ValueError(f"Unsupported LLM provider: {self.provider}")
 
-    def _query_openai(self, prompt: str) -> dict:
+    def _query_openai(self, prompt: str) -> str:
         """Handles OpenAI API calls."""
         try:
+            openai.api_key = self.api_key # set api key here
             response = openai.chat.completions.create(
                 model=self.model,
                 messages=[{"role": "user", "content": prompt}],
             )
-            return [{"generated_text": response.choices[0].message.content}]
+            return self._parse_response(response)
         except openai.OpenAIError as e:
-            logger.error(f"❌ OpenAI Query Failed: {e}")
-            return [{"generated_text": f"OpenAI query failed: {e}"}]
+            logger.error(f"OpenAI Query Failed: {e}")
+            return f"OpenAI query failed: {e}"
 
-    def _query_anthropic(self, prompt: str) -> dict:
+    def _query_anthropic(self, prompt: str) -> str:
         """Handles Anthropic API calls."""
         try:
             headers = {
@@ -95,41 +68,40 @@ class LLMProvider:
             response_json = response.json()
 
             if response.status_code != 200:
-                logger.error(f"❌ Anthropic API Error: {response_json}")
-                return [{"generated_text": f"Anthropic query failed: {response_json}"}]
+                logger.error(f"Anthropic API Error: {response_json}")
+                return f"Anthropic query failed: {response_json}"
 
-            return [{"generated_text": response_json["content"]["text"]}]
+            return self._parse_response(response_json)
         except requests.RequestException as e:
-            logger.error(f"❌ Anthropic Query Failed: {e}")
-            return [{"generated_text": f"Anthropic query failed: {e}"}]
+            logger.error(f"Anthropic Query Failed: {e}")
+            return f"Anthropic query failed: {e}"
 
-    def _query_huggingface(self, prompt: str) -> dict:
+    def _query_huggingface(self, prompt: str) -> str:
         """Handles Hugging Face API calls."""
         try:
             headers = {
                 "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json",
             }
-            payload = {"inputs": prompt, "parameters": {"max_length": 300}}
+            payload = {"inputs": prompt, "parameters": {"max_length": 300, "return_full_text": False}}
 
-            response = requests.post(f"{self.api_url}{self.model}", json=payload, headers=headers)
-
-            # DEBUG: Print raw response
-            logger.debug(f"🔍 Hugging Face Full Response: {response.status_code} - {response.text}")
+            # Increase timeout here.  Default is probably 5 seconds.
+            response = requests.post(f"{self.api_url}/{self.model}", json=payload, headers=headers, timeout=90)  # Example: 90 seconds
 
             response_json = response.json()
 
             if response.status_code != 200:
-                logger.error(f"❌ Hugging Face API Error: {response_json}")
-                return [{"generated_text": f"Hugging Face query failed: {response_json}"}]
+                logger.error(f"Hugging Face API Error: {response_json}")
+                return f"Hugging Face query failed: {response_json}"  # Return error as string
 
-            return [{"generated_text": response_json[0]["generated_text"]}]
+            return self._parse_response(response_json)
 
         except requests.RequestException as e:
-            logger.error(f"❌ Hugging Face Query Failed: {e}")
-            return [{"generated_text": f"Hugging Face query failed: {e}"}]
+            logger.error(f"Hugging Face Query Failed: {e}")
+            return f"Hugging Face query failed: {e}"  # Return error as string
 
-    def _query_mistral(self, prompt: str) -> dict:
+
+    def _query_mistral(self, prompt: str) -> str:
         """Handles Mistral API calls."""
         try:
             headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
@@ -138,15 +110,15 @@ class LLMProvider:
             response_json = response.json()
 
             if response.status_code != 200:
-                logger.error(f"❌ Mistral API Error: {response_json}")
-                return [{"generated_text": f"Mistral query failed: {response_json}"}]
+                logger.error(f"Mistral API Error: {response_json}")
+                return f"Mistral query failed: {response_json}"
+            return self._parse_response(response_json)
 
-            return [{"generated_text": response_json["choices"][0]["message"]["content"]}]
         except requests.RequestException as e:
-            logger.error(f"❌ Mistral Query Failed: {e}")
-            return [{"generated_text": f"Mistral query failed: {e}"}]
+            logger.error(f"Mistral Query Failed: {e}")
+            return f"Mistral query failed: {e}"
 
-    def _query_deepseek(self, prompt: str) -> dict:
+    def _query_deepseek(self, prompt: str) -> str:
         """Handles DeepSeek API calls."""
         try:
             headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
@@ -155,12 +127,37 @@ class LLMProvider:
             response_json = response.json()
 
             if response.status_code != 200:
-                logger.error(f"❌ DeepSeek API Error: {response_json}")
-                return [{"generated_text": f"DeepSeek query failed: {response_json}"}]
+                logger.error(f"DeepSeek API Error: {response_json}")
+                return f"DeepSeek query failed: {response_json}"
 
-            return [{"generated_text": response_json["choices"][0]["message"]["content"]}]
+            return self._parse_response(response_json)
+
         except requests.RequestException as e:
-            logger.error(f"❌ DeepSeek Query Failed: {e}")
-            return [{"generated_text": f"DeepSeek query failed: {e}"}]
-        
+            logger.error(f"DeepSeek Query Failed: {e}")
+            return f"DeepSeek query failed: {e}"
 
+    def _parse_response(self, response: Any) -> str:
+        """Parses the LLM response and extracts the generated text."""
+        try:
+            # More robust and flexible parsing logic:
+            if isinstance(response, list) and response:
+                first_item = response[0]
+                if isinstance(first_item, dict):
+                    if "generated_text" in first_item:
+                        text = first_item["generated_text"].strip()
+                        text = text.replace("<p>", "").replace("</p>", "").strip()  # Remove HTML tags
+                        return text
+                    elif "text" in first_item:  # Fallback option
+                        text = first_item["text"].strip()
+                        text = text.replace("<p>", "").replace("</p>", "").strip()  # Remove HTML tags
+                        return text
+                    # Add more fallback keys as needed based on potential responses.
+                # Consider adding checks for other response types (e.g., if it's a string directly)
+
+            # Check if response is already a string.
+            if isinstance(response, str):
+                return response
+            raise LLMParsingError(f"Unexpected LLM response format: {response}")
+
+        except Exception as e:
+            raise LLMParsingError(f"Error during LLM response parsing: {e}") from e

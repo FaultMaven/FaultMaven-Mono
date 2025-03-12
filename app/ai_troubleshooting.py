@@ -1,172 +1,156 @@
 """
 ai_troubleshooting.py - AI-Powered Troubleshooting Module
 
-This module integrates:
-- **LLM-based analysis** (OpenAI, Anthropic, Mistral, Hugging Face).
-- **Structured troubleshooting workflows** for diagnosing issues.
-
-Responsibilities:
-1️⃣ **Synthesizes Query + Observability Insights**
-   - Accepts **user queries** and **logs/metrics** for context-aware analysis.
-   - Structures logs into a digestible format for the LLM.
-
-2️⃣ **LLM-Based Troubleshooting**
-   - Constructs structured prompts to guide AI for reliable, actionable output.
-   - Routes queries dynamically to the configured LLM provider.
-
-3️⃣ **Structured Response Processing**
-   - Parses the LLM’s response into a structured format.
-   - Extracts root cause hypotheses and next steps for actionability.
+This module integrates LLM-based analysis with structured troubleshooting
+workflows for diagnosing issues.
 """
 
 import re
 import json
 from typing import Dict, List, Any, Optional
 from app.logger import logger
-from app.llm_provider import LLMProvider
+from app.llm_provider import LLMProvider  # No need to import LLMParsingError anymore
+from config.settings import settings
+import html
 
-def query_llm(prompt: str) -> Any:
-    """Query the LLM."""
-    try:
-        return LLMProvider().query(prompt)
-    except Exception as e:
-        logger.error(f"LLM query failed: {e}")
-        raise
-
-def process_query(query: str) -> str:
+def process_query(query: str, llm_provider: LLMProvider, context:  Optional[List[Dict[str, Any]]] = None) -> str:
     """Handles query-only requests."""
+    prompt = generate_general_query_prompt(query, context)
+    result = llm_provider.query(prompt)
+    logger.info(f"LLM raw response: {result}") # Keep this for debugging.
+    return format_llm_response(result)
+
+
+def process_query_with_logs(query: str, log_insights_list: List[Dict[str, Any]], llm_provider: LLMProvider, context:  Optional[List[Dict[str, Any]]] = None) -> str:
+    """Handles query + logs requests.  Returns formatted HTML."""
+    prompt = generate_troubleshooting_prompt(query, log_insights_list, context)
+    result = llm_provider.query(prompt)
+    return format_llm_response(result)
+
+
+def generate_troubleshooting_prompt(query: str, analysis_results_list: List[Dict[str, Any]], context: Optional[List[Dict[str, Any]]] = None) -> str:
+    """Formats the troubleshooting prompt, handling multiple data submissions."""
+
+    context_string = format_context_for_prompt(context) if context else ""
+    data_summary = format_data_summary(analysis_results_list)
+
+    prompt = settings.troubleshooting_prompt.format(
+        user_query=query,
+        data_summary=data_summary,
+        context = context_string
+    )
+    return prompt
+
+def generate_general_query_prompt(query: str, context: Optional[List[Dict[str, Any]]] = None) -> str:
+    """Formats the general query prompt, including conversation history."""
+    context_string = format_context_for_prompt(context) if context else ""
+    prompt = settings.general_query_prompt.format(query=query, context=context_string)
+    return prompt
+
+def format_context_for_prompt(context: List[Dict[str, Any]]) -> str:
+    """Formats the conversation history for inclusion in the prompt."""
+    formatted_context = ""
+    for item in context:
+        if item["role"] == "user":
+            formatted_context += f"User: {item['content']}\n"
+        elif item["role"] == "assistant":
+            formatted_context += f"Assistant: {item['content']}\n"
+    return formatted_context
+
+def process_data_summary(log_insights: Dict[str, Any], llm_provider: LLMProvider) -> str:
+    """Generates an LLM-powered summary of the log analysis results."""
     try:
-        response = query_llm(query)
-        # Extract text from LLM response
-        if isinstance(response, list) and response and isinstance(response[0], dict) and "generated_text" in response[0]:
-            response_text = response[0]["generated_text"]
-            # Extract root cause from the response
-            cause_match = re.search(r"(?:Root Cause|Likely root cause):\s*(.+?)(?:\. Next Steps:|\n|$)", response_text, re.DOTALL)
-            if cause_match:
-                # Clean up the root cause text
-                likely_cause = cause_match.group(1).strip().replace("**", "").strip()
-                return likely_cause
-            else:
-                return "Unknown"
+         # Use the keys from log_insights directly, no need to extract individual fields
+        log_data_string = format_log_data_for_summary(log_insights) # Format as string
+        prompt = settings.log_summary_prompt.format(log_data=log_data_string) # Pass log data.
+        result = llm_provider.query(prompt)
+        if result:
+            return result
         else:
-            logger.error(f"Unexpected LLM response format: {response}")
-            return "Error: Unexpected LLM response format."
+            logger.error("LLM returned an empty response for data summary.")
+            return "Error: LLM returned an empty response." # Consistent Error Message
     except Exception as e:
-        logger.error(f"LLM Query Failed: {e}")
-        return f"Error: LLM query failed: {e}"
+        logger.error(f"LLM data summary generation failed: {e}", exc_info=True)
+        return "Error generating data summary."  # Consistent Error Message
 
-def process_query_with_logs(query: str, log_insights: Dict[str, Any]) -> Dict[str, Any]:
-    """Handles query + logs requests."""
+def format_log_data_for_summary(log_insights: Dict[str, Any]) -> str:
+    """Formats log insights into a string for the log_summary_prompt"""
+    summary = log_insights.get("summary", "No detailed summary available.")
+    anomalies = log_insights.get("anomalies", [])
+    categorized_logs = log_insights.get("categorized_logs", {})
+    metrics = log_insights.get("metrics", {})
+
+    formatted_data = f"Log Summary: {summary}\n"
+    if anomalies:
+        formatted_data += "Detected Anomalies:\n" + "\n".join([f"  - {a}" for a in anomalies]) + "\n"
+    if categorized_logs:
+        formatted_data += "Categorized Logs (Counts):\n"
+        for category, count in categorized_logs.items():
+            formatted_data += f"  - {category}: {count}\n"
+    if metrics:
+        formatted_data += "Metrics (Averages):\n"
+        for metric, value in metrics.items():
+            formatted_data += f"  - {metric}: {value}\n"
+    return formatted_data
+
+def format_llm_response(response_text: str) -> str:
+    """Formats the raw LLM response for display.  Handles JSON and plain text,
+    including numbered and bulleted lists, and ensures paragraphs are
+    correctly separated.
+    """
     try:
-        # Construct structured prompt
-        prompt = generate_troubleshooting_prompt(log_insights)
+        # Attempt to parse as JSON
+        parsed_response = json.loads(response_text)
+        # If it's JSON, format it nicely
+        formatted_output = f"<p><strong>Answer:</strong> {parsed_response.get('answer', 'No answer provided.')}</p>"
+        if parsed_response.get("action_items"):
+            formatted_output += "<p><strong>Action Items:</strong></p><ul>"  # Use <ul>
+            for item in parsed_response["action_items"]:
+                formatted_output += f"<li>{html.escape(item)}</li>"  # Escape each item
+            formatted_output += "</ul>"  # Use </ul>
+        return formatted_output
 
-        # Query the LLM and parse the response
-        response = query_llm(prompt)
-        parsed_response = parse_llm_response(response)
-
-        if not parsed_response["next_steps"]:
-            logger.warning("⚠️ LLM response did not provide actionable next steps.")
-            return {"error": "LLM response did not provide actionable next steps"}
-
-        return parsed_response
-    except Exception as e:
-        logger.error(f"AI troubleshooting failed: {e}")
-        return {"error": f"Error: AI troubleshooting failed: {e}"}
-
-def generate_troubleshooting_prompt(analysis_results: Dict[str, Any]) -> str:
-    """
-    Converts structured log insights into a query-friendly format for the LLM.
-
-    Args:
-        analysis_results (dict): Insights from log analysis.
-
-    Returns:
-        str: A formatted troubleshooting prompt for the LLM.
-    """
-    log_summary = analysis_results.get("summary", "No detailed summary available")
-    anomalies = analysis_results.get("anomalies", [])
-
-    prompt = f"""
-    You are a system troubleshooting assistant. Analyze the following logs
-    and identify the most probable root causes and necessary next steps.
-
-    **Log Summary:**
-    {log_summary}
-
-    **Detected Anomalies:**
-    {', '.join(anomalies) if anomalies else 'No anomalies detected'}
-
-    **Response Format (STRICT):**
-    - **Root Cause:** <Brief description>
-    - **Next Steps:**
-      1. <Step 1>
-      2. <Step 2>
-      3. <Step 3> (Minimum 3 steps)
-
-    **Example Response (Even without detailed information):**
-    - **Root Cause:** General API connectivity issue
-    - **Next Steps:**
-      1. Check network connectivity.
-      2. Review API service status.
-      3. Examine recent deployment changes.
-
-    Provide a response even if detailed log information is unavailable.
-    """
-    return prompt.strip()
-
-def parse_llm_response(response: Any) -> Dict[str, Any]:
-    """Parses the LLM response into structured troubleshooting steps."""
-    if isinstance(response, list) and response and response[0].get("generated_text"):
-        response_text = response[0].get("generated_text", "").strip()
-    elif isinstance(response, str):
-        response_text = response.strip()
-    else:
-        return {"likely_cause": "Unknown", "next_steps": ["No specific next steps provided."]}
-
-    # Log the LLM response text for debugging
-    logger.debug(f"LLM Response Text: {response_text}")
-
-    # Try to parse as JSON first
-    try:
-        parsed_json = json.loads(response_text)
-        if isinstance(parsed_json, dict) and "likely_cause" in parsed_json and "next_steps" in parsed_json:
-            return parsed_json
     except json.JSONDecodeError:
-        pass
+        # If it's not JSON, do more advanced formatting
+        response_text = html.escape(response_text)  # Always escape!
 
-    # Fallback to regex parsing
-    cause_match = re.search(r"(?:Root Cause|Likely root cause):\s*(.+?)(?:\. Next Steps:|\n|$)", response_text, re.DOTALL)
-    next_steps_match = re.findall(r"^\d+\.\s(.+)", response_text, re.MULTILINE)
+        paragraphs = response_text.split("\n\n")
+        formatted_output = ""
+        in_numbered_list = False  # Flag to track if we're inside a numbered list
 
-    likely_cause = cause_match.group(1).strip() if cause_match else "Unknown"
-    # Clean up the root cause text
-    likely_cause = likely_cause.replace("**", "").strip()
-    next_steps = next_steps_match or ["No specific next steps provided."]
+        for p in paragraphs:
+            p = p.strip()
+            if not p:
+                continue
 
-    return {"likely_cause": likely_cause, "next_steps": next_steps}
+            lines = p.split("\n")
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
 
-# Future Implementation Placeholders
-def retrieve_past_cases(issue_description: str) -> Dict[str, str]:
-    """
-    Placeholder for retrieving past troubleshooting cases.
+                # Check for bullet points at the START OF THE LINE
+                if line.startswith("-") or line.startswith("*"):
+                    if in_numbered_list:  # Close <ol> if we were in a numbered list
+                        formatted_output += "</ol>"
+                        in_numbered_list = False
+                    formatted_output += f"<ul><li>{line.lstrip('-* ')}</li></ul>"  # Wrap in <ul><li>
 
-    Args:
-        issue_description (str): The current issue being diagnosed.
+                # Check for numbered list at the START OF THE LINE
+                elif re.match(r"^\s*\d+\.\s", line):
+                    if not in_numbered_list:  # Start a new <ol> if needed
+                        formatted_output += "<ol>"
+                        in_numbered_list = True
+                    formatted_output += f"<li>{line.lstrip('0123456789. ')}</li>"  # Add <li>
 
-    Returns:
-        dict: Relevant past cases (to be implemented).
-    """
-    return {"message": "Retrieving past cases is not implemented yet."}
+                else:  # Regular text (not a list item)
+                    if in_numbered_list:  # Close <ol> if we were in a numbered list
+                        formatted_output += "</ol>"
+                        in_numbered_list = False
+                    formatted_output += f"<p>{line}</p>"  # Wrap in <p>
 
-def suggest_follow_up_questions(analysis_results: Dict[str, Any]) -> List[str]:
-    """
-    Placeholder for generating intelligent follow-up questions.
+            if in_numbered_list: # Close numbered list if the paragraph end.
+                formatted_output += "</ol>"
+                in_numbered_list = False
 
-    Args:
-        analysis_results (dict): Insights from log analysis.
-
-    Returns:
-        list: Suggested follow-up questions (to be implemented).
-    """
-    return ["What were the most recent configuration changes?", "Are there related alerts in the monitoring system?"]
+        return formatted_output

@@ -198,3 +198,69 @@ Handles all requests from the web client.
 
 This document provides the detailed technical specifications for FaultMaven’s architecture and processing logic. It ensures that every user request is processed efficiently in real time via a unified backend, with intelligent, adaptive troubleshooting and session-based continuous learning.
 
+
+# 
+#
+#
+# ---------
+
+
+update 3/8/2025
+
+Note: This is an addition to the existing detailed design document. It clearly defines the expected behavior and interaction model of FaultMaven. It highlights the importance of session management and contextual prompting in achieving the desired conversational troubleshooting experience. It also clearly separates the responsibilities of the client and server, making the design more understandable.
+
+## Communication Protocol and Core Design Principles
+
+This section outlines the communication protocol between the user (via the browser extension) and the FaultMaven backend, as well as the core design principles that guide the application's behavior.
+
+### User-FaultMaven Communication Protocol
+
+FaultMaven is designed to facilitate a context-aware, conversational troubleshooting experience.  The following rules govern the interaction between the user and the system:
+
+1.  **Domain Focus:** FaultMaven is specialized for Site Reliability Engineering (SRE), DevOps, system administration, cloud computing, and related technical troubleshooting tasks.  It is designed to provide assistance within this domain. While general questions *can* be asked, they are treated as context-setting for subsequent, more specific troubleshooting queries. FaultMaven may politely decline to answer questions that are clearly outside of its domain of expertise.
+
+2.  **Alternating Data and Queries:** The user interacts with FaultMaven by submitting either *data* (logs, metrics, web page content) or *queries*. There are no restrictions on the order or timing of these submissions.  The user can:
+    *   Submit data first, then ask questions about it.
+    *   Ask a general question first, then provide data for more specific analysis.
+    *   Submit multiple sets of data and ask questions related to any or all of them within the same conversation.
+    *   Ask a series of related questions without re-submitting data.
+
+3.  **Data Submission and Immediate Feedback:** When data is submitted to the `/data` endpoint, FaultMaven:
+    *   Processes the data (parsing, analysis, anomaly detection).
+    *   Stores the *processed results* (and a reference to the raw data, if needed) in the user's session.
+    *   Returns an *immediate* summary of the analysis to the user (e.g., "Log analysis complete. Detected 4 errors and 2 warnings."). This provides quick feedback *before* the user formulates a specific query.
+
+4.  **Contextual Query Handling:** When a query is submitted to the `/query` endpoint, FaultMaven:
+    *   Retrieves the user's session, including the conversation history and *all* previously submitted data.
+    *   If data is present in the session, the query is treated as a *troubleshooting* query.  FaultMaven uses the `troubleshooting_prompt` and includes the *entire* accumulated, processed data from the session as context for the LLM.
+    *   If *no* data is present in the session, the query is treated as a *general* question. FaultMaven uses the `general_query_prompt`.
+    *   The conversation history is *always* included in the prompt, allowing the LLM to maintain context.
+
+5.  **Session Management:**
+    *   FaultMaven uses server-side session management to maintain context across multiple interactions.
+    *   A unique `session_id` (UUID) is used to identify each conversation.
+    *   The client (browser extension) is responsible for storing the `session_id` and sending it with each request in the `X-Session-ID` HTTP header.
+    *   The server stores session data (conversation history, processed data) associated with each `session_id`.
+    *   Sessions have a timeout period (currently 30 minutes of inactivity), after which the session data is deleted.
+    *   The client can explicitly start a new conversation, clearing the `session_id` and effectively resetting the context.
+
+6.  **LLM Interaction:**
+
+    *   FaultMaven acts as an intermediary between the user and the LLM.
+    *   FaultMaven is designed to be LLM-agnostic, supporting multiple LLM providers through an abstraction layer (`LLMProvider`).
+    *    The LLM is always called with a prompt that includes:
+        *   The current user query.
+        *   The formatted conversation history (if any).
+        *   Relevant processed data (if any).
+    *   FaultMaven expects a raw string response.
+
+### Core Design Principles
+
+1. **Transparency:** FaultMaven aims to be a "smart assistant," *enhancing* the user's interaction with the LLM, not replacing it. The raw LLM responses are made available.
+2. **Context is King:** Maintaining conversation context is paramount.  The session management system and contextual prompting are designed to ensure the LLM has access to all relevant information.
+3. **Data-Driven Troubleshooting:** FaultMaven's primary value comes from its ability to process and analyze system data (logs, metrics), providing context that a general-purpose LLM lacks.
+4. **Flexibility:** The system is designed to be flexible and extensible, supporting multiple data types, LLM providers, and future enhancements (like LLM chaining).
+5. **User Control:** The user is in control of the conversation. They can submit data or queries at any time, and they can start new conversations when needed.
+6. **Stateless LLM, Stateful Faultmaven:** FaultMaven leverages *stateless* LLM API calls, while providing a *stateful* conversational experience through its own session management.
+7. **Security**: All data submitted by users are considered sensitive.
+
