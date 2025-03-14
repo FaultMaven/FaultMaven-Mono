@@ -1,51 +1,64 @@
 """
 ai_troubleshooting.py - AI-Powered Troubleshooting Module
 
-This module integrates LLM-based analysis with structured troubleshooting
-workflows for diagnosing issues.
+Integrates LLM-based analysis with structured troubleshooting workflows.
 """
 
 import re
 import json
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Union
 from app.logger import logger
-from app.llm_provider import LLMProvider  # No need to import LLMParsingError anymore
+from app.llm_provider import LLMProvider
 from config.settings import settings
 import html
+from app.log_metrics_analysis import LogInsights  # Import LogInsights
 
-def process_query(query: str, llm_provider: LLMProvider, context:  Optional[List[Dict[str, Any]]] = None) -> str:
-    """Handles query-only requests."""
+
+def process_query(query: str, llm_provider: LLMProvider, context: Optional[List[Dict[str, Any]]] = None) -> str:
+    """Handles query-only requests, returning formatted HTML."""
     prompt = generate_general_query_prompt(query, context)
     result = llm_provider.query(prompt)
-    logger.info(f"LLM raw response: {result}") # Keep this for debugging.
-    return format_llm_response(result)
+    logger.info(f"LLM raw response (query-only): {result}")  # Log raw response
+    return format_llm_response(result)  # Format the response
 
 
-def process_query_with_logs(query: str, log_insights_list: List[Dict[str, Any]], llm_provider: LLMProvider, context:  Optional[List[Dict[str, Any]]] = None) -> str:
+def process_query_with_logs(
+    query: str,
+    log_insights_list: List[LogInsights],
+    llm_provider: LLMProvider,
+    context: Optional[List[Dict[str, Any]]] = None
+) -> str:
     """Handles query + logs requests.  Returns formatted HTML."""
     prompt = generate_troubleshooting_prompt(query, log_insights_list, context)
+    logger.info(f"Prompt: {prompt}")  # Log out prompt
     result = llm_provider.query(prompt)
-    return format_llm_response(result)
+    # logger.info(f"LLM raw response (with logs): {result}") # Log raw response
+    return format_llm_response(result)  # Format result
 
 
-def generate_troubleshooting_prompt(query: str, analysis_results_list: List[Dict[str, Any]], context: Optional[List[Dict[str, Any]]] = None) -> str:
+def generate_troubleshooting_prompt(
+    query: str,
+    analysis_results_list: List[LogInsights],
+    context: Optional[List[Dict[str, Any]]] = None
+) -> str:
     """Formats the troubleshooting prompt, handling multiple data submissions."""
 
     context_string = format_context_for_prompt(context) if context else ""
     data_summary = format_data_summary(analysis_results_list)
 
     prompt = settings.troubleshooting_prompt.format(
-        user_query=query,
-        data_summary=data_summary,
-        context = context_string
+        user_query=query, data_summary=data_summary, context=context_string
     )
+    logger.debug(f"Troubleshooting prompt:\n{prompt}")  # VERY IMPORTANT LOG
     return prompt
+
 
 def generate_general_query_prompt(query: str, context: Optional[List[Dict[str, Any]]] = None) -> str:
     """Formats the general query prompt, including conversation history."""
     context_string = format_context_for_prompt(context) if context else ""
     prompt = settings.general_query_prompt.format(query=query, context=context_string)
     return prompt
+
 
 def format_context_for_prompt(context: List[Dict[str, Any]]) -> str:
     """Formats the conversation history for inclusion in the prompt."""
@@ -57,100 +70,193 @@ def format_context_for_prompt(context: List[Dict[str, Any]]) -> str:
             formatted_context += f"Assistant: {item['content']}\n"
     return formatted_context
 
-def process_data_summary(log_insights: Dict[str, Any], llm_provider: LLMProvider) -> str:
+
+def process_data_summary(log_insights: LogInsights, llm_provider: LLMProvider) -> str:
     """Generates an LLM-powered summary of the log analysis results."""
     try:
-         # Use the keys from log_insights directly, no need to extract individual fields
-        log_data_string = format_log_data_for_summary(log_insights) # Format as string
-        prompt = settings.log_summary_prompt.format(log_data=log_data_string) # Pass log data.
+        log_data_string = format_log_data_for_summary(log_insights)
+        prompt = settings.log_summary_prompt.format(log_data=log_data_string)
         result = llm_provider.query(prompt)
         if result:
             return result
         else:
             logger.error("LLM returned an empty response for data summary.")
-            return "Error: LLM returned an empty response." # Consistent Error Message
+            return "Error: LLM returned an empty response."
     except Exception as e:
         logger.error(f"LLM data summary generation failed: {e}", exc_info=True)
-        return "Error generating data summary."  # Consistent Error Message
+        return "Error generating data summary."
 
-def format_log_data_for_summary(log_insights: Dict[str, Any]) -> str:
-    """Formats log insights into a string for the log_summary_prompt"""
-    summary = log_insights.get("summary", "No detailed summary available.")
-    anomalies = log_insights.get("anomalies", [])
-    categorized_logs = log_insights.get("categorized_logs", {})
-    metrics = log_insights.get("metrics", {})
 
-    formatted_data = f"Log Summary: {summary}\n"
-    if anomalies:
-        formatted_data += "Detected Anomalies:\n" + "\n".join([f"  - {a}" for a in anomalies]) + "\n"
-    if categorized_logs:
-        formatted_data += "Categorized Logs (Counts):\n"
-        for category, count in categorized_logs.items():
-            formatted_data += f"  - {category}: {count}\n"
-    if metrics:
-        formatted_data += "Metrics (Averages):\n"
-        for metric, value in metrics.items():
-            formatted_data += f"  - {metric}: {value}\n"
+def format_data_summary(log_insights_list: List[LogInsights]) -> str:
+    """Formats a list of LogInsights objects into a single string."""
+    all_summaries = ""
+    for log_insights in log_insights_list:
+        summary = log_insights.summary  # Access .summary directly
+        all_summaries += f"- Log Summary: {summary}\n"
+
+        anomalies = log_insights.anomalies
+        if anomalies:
+            all_summaries += "  - Detected Anomalies:\n"
+            for anomaly in anomalies:
+                all_summaries += f"    - {anomaly}\n"
+
+        level_counts = log_insights.level_counts
+        if level_counts:
+            all_summaries += "  - Categorized Logs (Counts):\n"
+            for category, count in level_counts.items():
+                all_summaries += f"    - {category}: {count}\n"
+
+        metrics = log_insights.metrics
+        if metrics:
+            all_summaries += "  - Metrics (Averages):\n"
+            for metric, value in metrics.items():
+                all_summaries += f"    - {metric}: {value}\n"
+    return all_summaries
+
+
+def format_log_data_for_summary(log_insights: LogInsights) -> str:
+    """Formats LogInsights data for LLM summary."""
+    # Construct a string representation of the LogInsights data
+    summary = log_insights.summary  # Access fields directly
+
+    level_counts_str = ", ".join(
+        f"{level}: {count}" for level, count in log_insights.level_counts.items()
+    )
+    error_messages_str = ", ".join(log_insights.error_messages)
+    anomalies_str = ", ".join(log_insights.anomalies)
+    metrics_str = ", ".join(
+        f"{metric}: {value}" for metric, value in log_insights.metrics.items()
+    )
+
+    formatted_data = (
+        f"Summary: {summary}\n"
+        f"Severity Level Counts: {level_counts_str}\n"
+        f"Error Messages: {error_messages_str}\n"
+        f"Anomalies Detected: {anomalies_str}\n"
+        f"Metrics: {metrics_str}"
+    )
     return formatted_data
 
-def format_llm_response(response_text: str) -> str:
-    """Formats the raw LLM response for display.  Handles JSON and plain text,
-    including numbered and bulleted lists, and ensures paragraphs are
-    correctly separated.
+
+# --- Helper functions for formatting ---
+def sanitize_html(text: str) -> str:
     """
+    Sanitizes HTML content by escaping unsafe characters.
+    """
+    return html.escape(text)
+
+
+def format_json(parsed_response: Union[Dict, List]) -> str:
+    """
+    Formats a JSON response into HTML.  Handles nested structures.
+    """
+    formatted_output = ""
+
+    if isinstance(parsed_response, dict):
+        # Only include the content of 'answer', not the label
+        answer = parsed_response.get("answer", "No answer provided.")
+        formatted_output += f"<p>{sanitize_html(str(answer))}</p>"
+
+        # Only include the content of 'action_items', not the label
+        action_items = parsed_response.get("action_items", [])
+        if isinstance(action_items, list) and action_items:
+            formatted_output += "<ul>"
+            for item in action_items:
+                formatted_output += f"<li>{sanitize_html(str(item))}</li>"
+            formatted_output += "</ul>"
+
+    elif isinstance(parsed_response, list):
+        formatted_output += "<ul>"
+        for item in parsed_response:
+            formatted_output += f"<li>{sanitize_html(str(item))}</li>"
+        formatted_output += "</ul>"
+    else:
+        formatted_output += f"<p>{sanitize_html(str(parsed_response))}</p>"
+
+    return formatted_output
+
+
+def format_plain_text(response_text: str) -> str:
+    """
+    Formats plain text into HTML, handling paragraphs, bullets, and numbered lists.
+    Correctly handles single line breaks and list items at the start of lines.
+    """
+    response_text = sanitize_html(response_text)
+    formatted_output = ""
+    in_numbered_list = False
+    in_bulleted_list = False
+
+    # Iterate over lines, not paragraphs
+    for line in response_text.splitlines():
+        line = line.strip()
+        if not line:
+            if in_numbered_list:  # Close list at the end
+                formatted_output += "</ol>"
+                in_numbered_list = False
+            if in_bulleted_list:
+                formatted_output += "</ul>"
+                in_bulleted_list = False
+            continue
+
+        # Check for numbered list items at the start of the line
+        if re.match(r"^\s*\d+\.\s*", line):
+            if in_bulleted_list:  # Close bullet list.
+                formatted_output += "</ul>"
+                in_bulleted_list = False
+            if not in_numbered_list:  # If not already in a list, start a new one
+                formatted_output += "<ol>"
+                in_numbered_list = True
+            formatted_output += (
+                f"<li>{line.lstrip('0123456789. ')}</li>"  # Add the <li> tag
+            )
+        # Check for bullet points at the start of the line.
+        elif line.startswith("-") or line.startswith("*"):
+            if in_numbered_list:
+                formatted_output += "</ol>"
+                in_numbered_list = False
+            if not in_bulleted_list:
+                formatted_output += "<ul>"  # Start a new unordered list
+                in_bulleted_list = True
+            formatted_output += f"<li>{line.lstrip('-* ')}</li>"  # Add list item
+        else:
+            # If it's not a list item, close any open list and add as a paragraph
+            if in_numbered_list:
+                formatted_output += "</ol>"
+                in_numbered_list = False
+            if in_bulleted_list:
+                formatted_output += "</ul>"
+                in_bulleted_list = False
+            formatted_output += f"<p>{line}</p>"  # Wrap in <p> tags
+
+    # Close any open list tags at the very end
+    if in_numbered_list:
+        formatted_output += "</ol>"
+    if in_bulleted_list:
+        formatted_output += "</ul>"
+
+    return formatted_output
+
+
+def format_llm_response(response_text: str) -> str:
+    """
+    Formats a raw LLM response into HTML.  Handles JSON (extracting from
+    Markdown if necessary) and plain text.  Detects if the input is ALREADY
+    HTML and avoids double-encoding.
+    """
+    if not response_text or not isinstance(response_text, str):
+        return "<p>No response provided.</p>"
+
     try:
-        # Attempt to parse as JSON
+        # Check for Markdown code block and extract JSON if present
+        match = re.search(r"`json\s*([\s\S]*?)\s*`", response_text)
+        if match:
+            response_text = match.group(1).strip()  # Extract *just* the JSON
+
         parsed_response = json.loads(response_text)
-        # If it's JSON, format it nicely
-        formatted_output = f"<p><strong>Answer:</strong> {parsed_response.get('answer', 'No answer provided.')}</p>"
-        if parsed_response.get("action_items"):
-            formatted_output += "<p><strong>Action Items:</strong></p><ul>"  # Use <ul>
-            for item in parsed_response["action_items"]:
-                formatted_output += f"<li>{html.escape(item)}</li>"  # Escape each item
-            formatted_output += "</ul>"  # Use </ul>
+        formatted_output =  format_json(parsed_response)  # Use the dedicated JSON formatter
+        print(f"Formatted JSON output: {formatted_output}") #DEBUG
         return formatted_output
 
     except json.JSONDecodeError:
-        # If it's not JSON, do more advanced formatting
-        response_text = html.escape(response_text)  # Always escape!
-
-        paragraphs = response_text.split("\n\n")
-        formatted_output = ""
-        in_numbered_list = False  # Flag to track if we're inside a numbered list
-
-        for p in paragraphs:
-            p = p.strip()
-            if not p:
-                continue
-
-            lines = p.split("\n")
-            for line in lines:
-                line = line.strip()
-                if not line:
-                    continue
-
-                # Check for bullet points at the START OF THE LINE
-                if line.startswith("-") or line.startswith("*"):
-                    if in_numbered_list:  # Close <ol> if we were in a numbered list
-                        formatted_output += "</ol>"
-                        in_numbered_list = False
-                    formatted_output += f"<ul><li>{line.lstrip('-* ')}</li></ul>"  # Wrap in <ul><li>
-
-                # Check for numbered list at the START OF THE LINE
-                elif re.match(r"^\s*\d+\.\s", line):
-                    if not in_numbered_list:  # Start a new <ol> if needed
-                        formatted_output += "<ol>"
-                        in_numbered_list = True
-                    formatted_output += f"<li>{line.lstrip('0123456789. ')}</li>"  # Add <li>
-
-                else:  # Regular text (not a list item)
-                    if in_numbered_list:  # Close <ol> if we were in a numbered list
-                        formatted_output += "</ol>"
-                        in_numbered_list = False
-                    formatted_output += f"<p>{line}</p>"  # Wrap in <p>
-
-            if in_numbered_list: # Close numbered list if the paragraph end.
-                formatted_output += "</ol>"
-                in_numbered_list = False
-
-        return formatted_output
+        # If it's not JSON, use the plain text formatting
+        return format_plain_text(response_text)

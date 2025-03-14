@@ -10,8 +10,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator, model_validator, constr
 from typing import Optional, Dict, Any, List, Union
 from app.logger import logger
-from app.log_metrics_analysis import process_logs_data
-from app.ai_troubleshooting import process_query, process_query_with_logs, process_data_summary, format_llm_response
+from app.log_metrics_analysis import process_logs_data, LogInsights
+from app.ai_troubleshooting import process_query, process_query_with_logs #Removed process_data_summary
 from app.continuous_learning import update_session_learning  # Assuming this exists
 from app.llm_provider import LLMProvider, LLMParsingError  # Keep for potential error handling
 from fastapi.staticfiles import StaticFiles
@@ -23,7 +23,7 @@ import requests  # For fetching web pages
 from bs4 import BeautifulSoup  # For HTML parsing
 import time
 import aiohttp
-from app.session_management import get_session_data, create_session  # <--- CORRECT IMPORT
+from app.session_management import get_session_data, create_session
 
 # Constants for input validation
 MAX_QUERY_LENGTH = 10000
@@ -33,7 +33,7 @@ MAX_HISTORY_LENGTH = 20  # Maximum conversation turns to store
 
 # --- In-memory session storage (for development) ---
 # sessions = {}  # {session_id: {"history": [...], "data": [ { "type": "text", "content": "...", "summary": "..."}]}
-SESSION_TIMEOUT = 1800  # 30 minutes (in seconds)
+SESSION_TIMEOUT = settings.SESSION_TIMEOUT #Read from settings
 
 
 # --- Pydantic Models ---
@@ -49,33 +49,10 @@ class QueryRequest(BaseModel):
         if not 1 <= len(v) <= MAX_QUERY_LENGTH: # Enforce length constraints
             raise ValueError("Query length is out of bounds")
         return v
-
-class DataRequest(BaseModel):
-    """Defines the structure for incoming data requests (data upload)."""
-    text: Optional[str] = Field(None, description="Raw text data (e.g., logs pasted directly)")
-    file: Optional[UploadFile] = Field(None, description="Uploaded log file")
-    url: Optional[str] = Field(None, description="URL of a web page with relevant data")
-
-    @field_validator("file")
-    @classmethod
-    def check_file_content_type(cls, value:Optional[UploadFile]):
-        allowed_types = ["text/plain", "application/json"] # Example: allow text and json file
-        if value:
-            if value.content_type not in allowed_types:
-                raise ValueError(f"Unsupported file type. Only {','.join(allowed_types)} are allowed.")
-        return value
-
-    @model_validator(mode="before") # Check to ensure at least one and only one field is set.
-    def check_one_field_set(cls, values: Dict[str, Any]) -> Dict[str, Any]:
-        set_fields = sum([value is not None for value in values.values()])
-        if set_fields != 1:
-            raise ValueError("Exactly one of 'text', 'file', or 'url' must be provided.")
-        return values
-
 class QueryResponse(BaseModel):
     """Defines the structure for API query responses."""
     response: str
-    type: str  # "query-only", "data-summary", "combined", "empty"
+    type: str  # "query-only", "data-summary", "combined", "empty", "error"
     data: Optional[Dict[str, Any]] = None
     message: Optional[str] = None # Add a message field
 
@@ -133,16 +110,16 @@ def get_llm_provider():
 async def handle_data(
     response: Response,
     x_session_id: Optional[str] = Header(None),
-    text: Optional[str] = Form(None),
-    file: Optional[UploadFile] = File(None),
-    url: Optional[str] = Form(None),
     llm_provider: LLMProvider = Depends(get_llm_provider),
-    sessions: Dict[str, Dict[str, Any]] = Depends(get_sessions)  # Inject sessions!
+    sessions: Dict[str, Dict[str, Any]] = Depends(get_sessions),  # Inject sessions!
+    file: Optional[UploadFile] = File(None),  # For file uploads
+    text: Optional[str] = Form(None),  # For text input as form data
+    url: Optional[str] = Form(None),  # For URL input as form data
 ) -> JSONResponse:
     """Handles data upload (text, file, or URL)."""
 
     session_id = x_session_id or create_session(sessions) # Pass sessions
-    session = get_session_data(session_id, sessions, settings.SESSION_TIMEOUT) # Pass sessions
+    session = get_session_data(session_id, sessions) # Pass sessions
 
     if x_session_id and not session:  # Session ID provided but invalid
         response.status_code = 400  # Bad Request
@@ -152,49 +129,66 @@ async def handle_data(
     if not session: #Create if session is not valid
         session = sessions[session_id] = {"history": [], "data": [], "last_activity": time.time()}
 
-
-    if text:
-        data_type = "text"
-        data_content = text
-    elif file:
-        data_type = "file"
-        contents = await file.read()  # Read file contents as bytes
-        try:
-            data_content = contents.decode("utf-8")  # Decode as UTF-8
-        except UnicodeDecodeError:
-            await file.close() #Close it before throw exception
-            raise HTTPException(status_code=400, detail="Invalid file encoding.  Must be UTF-8.")
-        finally:
-            await file.close()
-    elif url:
-        data_type = "url"
-        try:
-          async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=10) as response:
-                response.raise_for_status()
-                soup = BeautifulSoup(await response.text(), 'html.parser')
-                for script in soup(["script", "style"]):
-                    script.extract()
-                data_content = soup.get_text(separator=' ', strip=True)
-        except aiohttp.ClientError as e:
-            raise HTTPException(status_code=400, detail=f"Error fetching URL: {e}")
-    else:
-        # Should never happen because of Pydantic validation
-        raise HTTPException(status_code=400, detail="No data provided.")
+    headers = {"X-Session-ID": session_id}
 
     try:
-      log_insights = process_logs_data(data_content, llm_provider)
-      # Generate LLM-powered summary *and* store the structured insights
-      llm_summary = process_data_summary(log_insights, llm_provider) # Call new function.
-      session["data"].append({"type": data_type, "content": data_content, "summary": log_insights, 'llm_summary': llm_summary}) # Store LLM summary
-      session["last_activity"] = time.time()
+        if file:
+            data_type = "file"
+            logger.debug(f"File received: {file.filename}")
+            contents = await file.read()  # Read file contents as bytes
+            try:
+                data_content = contents.decode("utf-8")  # Decode as UTF-8
+            except UnicodeDecodeError:
+                await file.close() #Close it before throw exception
+                raise HTTPException(status_code=400, detail="Invalid file encoding.  Must be UTF-8.")
+            finally:
+                await file.close()
+        elif text:
+            data_type = "text"
+            data_content = text
+            logger.debug(f"Text data received: {data_content[:100]}...") # Log a snippet of the content
+        elif url:
+            data_type = "url"
+            logger.debug(f"URL received: {url}")
+            data_content = await fetch_data_from_url(url)
+            if data_content is None: #fetch_data_from_url returns None on error.
+              raise HTTPException(status_code=400, detail = "Failed to fetch URL content.")
+        else:
+            # Should never happen because of Pydantic validation, but good practice
+            logger.error("No data provided in request.")
+            raise HTTPException(status_code=400, detail="No data provided.")
 
-      response_data = DataResponse(summary=llm_summary, type="data-summary", data=log_insights, message = "Data is received and stored.") # Return data
-      headers = {"X-Session-ID": session_id}
-      return JSONResponse(content=response_data.dict(), headers=headers) #Return result
+        logger.debug(f"Data type: {data_type}, Data content length: {len(data_content)}") # Log data type and content length
+
+        log_insights = process_logs_data(data_content, llm_provider)
+        # Generate LLM-powered summary *and* store the structured insights
+        llm_summary = log_insights.summary # Access directly from returned value!
+        session["data"].append({"type": data_type, "content": data_content, "summary": log_insights.dict(), 'llm_summary': llm_summary}) # Store LLM summary and make insights to be dict
+        session["last_activity"] = time.time()
+
+        response_data = DataResponse(summary=llm_summary, type="data-summary", data=log_insights.dict(), message = "Data is received and stored.") # Return data
+        return JSONResponse(content=response_data.dict(), headers=headers) #Return result
+
     except ValueError as e:
         logger.error(f"Data Processing Error: {e}")
-        raise HTTPException(status_code=400, detail=f"Data processing error: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:   #pylint: disable=broad-exception-caught
+        logger.exception(f"An unexpected error occurred: {e}")
+        raise HTTPException(status_code=500, detail="An unexpected error occurred.")
+
+async def fetch_data_from_url(url: str) -> Optional[str]:
+    """Fetches and extracts text content from a URL."""
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=10) as response:
+                response.raise_for_status()  # Raise HTTP errors
+                soup = BeautifulSoup(await response.text(), 'html.parser')
+                for script in soup(["script", "style"]):  # Remove scripts and styles
+                    script.extract()
+                return soup.get_text(separator=' ', strip=True)
+    except aiohttp.ClientError as e:
+        logger.error(f"Error fetching URL {url}: {e}")
+        return None
 
 @app.post("/query", response_model=QueryResponse)
 async def handle_query(
@@ -208,13 +202,12 @@ async def handle_query(
     logger.info(f"Received request: {request.dict()}")
 
     session_id = x_session_id or create_session(sessions) #Pass sessions
-    session = get_session_data(session_id, sessions, settings.SESSION_TIMEOUT) #Pass sessions
+    session = get_session_data(session_id, sessions) #Pass sessions
     headers = {"X-Session-ID": session_id}
 
     if x_session_id and not session:  # Session ID provided but invalid
         response.status_code = 400  # Bad Request
-        # CHANGE HERE: Return a specific error type
-        return JSONResponse(content=QueryResponse(response="", type="session_expired", message="Session expired or invalid. Please start a new conversation.").dict(), headers=headers)
+        return JSONResponse(content=QueryResponse(response="", type="error", message="Session expired or invalid. Please start a new conversation.").dict(), headers=headers)
 
     if not session: #Create if session is not valid
         session = sessions[session_id] = {"history": [], "data": [], "last_activity": time.time()}
@@ -225,8 +218,8 @@ async def handle_query(
     try:
         if session_data:
             # If there's data, prepare the combined prompt using all available log insights.
-
-            response = process_query_with_logs(request.query, session_data, llm_provider, context) #Pass all data.
+            log_insights_list = [LogInsights(**data_item['summary']) for data_item in session_data]
+            response = process_query_with_logs(request.query, log_insights_list, llm_provider, context) #Pass all data.
             response_type = "combined"
         else:
              response = process_query(request.query, llm_provider, context)  # Pass context

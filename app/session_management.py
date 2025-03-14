@@ -1,8 +1,14 @@
+# app/session_management.py
 import uuid
 import time
 from typing import Dict, List, Any, Optional
 from config.settings import settings  # Import settings
 from app.logger import logger
+from fastapi import Response  # Import Response
+
+
+class SessionManagementError(Exception):  # Custom exception for session errors
+    pass
 
 def create_session(sessions: Dict[str, Dict[str, Any]]) -> str:
     """Creates a new session and returns the session ID.
@@ -18,22 +24,21 @@ def create_session(sessions: Dict[str, Dict[str, Any]]) -> str:
     logger.debug(f"Created new session: {session_id}")
     return session_id
 
-def get_session_data(session_id: str, sessions: Dict[str, Dict[str, Any]], session_timeout: int) -> Optional[Dict[str, Any]]:
+def get_session_data(session_id: str, sessions: Dict[str, Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     """Retrieves session data by ID, handling timeouts. Returns None if invalid.
 
     Args:
-        session_id: The ID of the session.
-        sessions:  The dictionary containing all sessions.
-        session_timeout: The session timeout in seconds
+        session_id: The ID of the session to retrieve.
+        sessions: The dictionary containing all sessions.
 
     Returns:
         The session data (dict) if the session exists and is not expired,
         otherwise None.
-
     """
     session = sessions.get(session_id)
     if session:
-        if time.time() - session["last_activity"] < session_timeout:
+        # Get SESSION_TIMEOUT from settings
+        if time.time() - session["last_activity"] < settings.SESSION_TIMEOUT:
             session["last_activity"] = time.time()  # Update last activity
             logger.debug(f"Retrieved session data for: {session_id}")
             return session
@@ -42,7 +47,8 @@ def get_session_data(session_id: str, sessions: Dict[str, Dict[str, Any]], sessi
             del sessions[session_id]
             logger.info(f"Session expired and deleted: {session_id}")
     logger.debug(f"Session not found: {session_id}")
-    return None
+    return None  # Explicitly return None
+
 def delete_session(session_id: str, sessions: Dict[str, Dict[str, Any]]) -> bool:
     """Deletes a session by its ID.
 
@@ -59,3 +65,8 @@ def delete_session(session_id: str, sessions: Dict[str, Dict[str, Any]]) -> bool
         return True
     logger.debug(f"Attempted to delete non-existent session: {session_id}")
     return False
+def get_session_id(response: Response) -> Optional[str]:
+    """
+    Retrieves the session ID from the 'X-Session-ID' header in a FastAPI Response object.
+    """
+    return response.headers.get("X-Session-ID")
