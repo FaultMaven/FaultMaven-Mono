@@ -65,8 +65,26 @@ def delete_session(session_id: str, sessions: Dict[str, Dict[str, Any]]) -> bool
         return True
     logger.debug(f"Attempted to delete non-existent session: {session_id}")
     return False
+
 def get_session_id(response: Response) -> Optional[str]:
     """
     Retrieves the session ID from the 'X-Session-ID' header in a FastAPI Response object.
     """
     return response.headers.get("X-Session-ID")
+
+def save_session_data(session_id: str, session_data: Dict[str, Any], sessions: Dict[str, Dict[str, Any]]) -> None:
+    """Saves the updated session data.  Currently uses in-memory storage."""
+    # No need to call get_sessions() here - sessions is passed in
+    if session_id in sessions:
+        sessions[session_id] = session_data
+        logger.debug(f"Session data saved for session ID: {session_id}")
+    else:
+        logger.warning(f"Attempted to save data for non-existent session: {session_id}")
+        # Consider raising an exception here in a production environment
+
+def delete_session(session_id: str, sessions: Dict[str, Dict[str,Any]]):
+    if session_id in sessions:
+        del sessions[session_id]
+        logger.info(f"Session deleted: {session_id}")
+    else:
+        logger.warning(f"Attempt to delete non-existent session: {session_id}")

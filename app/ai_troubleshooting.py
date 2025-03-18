@@ -11,54 +11,41 @@ from app.logger import logger
 from app.llm_provider import LLMProvider
 from config.settings import settings
 import html
-from app.log_metrics_analysis import LogInsights  # Import LogInsights
+from app.log_metrics_analysis import LogInsights
 
-
-def process_query(query: str, llm_provider: LLMProvider, context: Optional[List[Dict[str, Any]]] = None) -> str:
+def process_query(query: str, llm_provider: LLMProvider, context:  Optional[List[Dict[str, Any]]] = None) -> str:
     """Handles query-only requests, returning formatted HTML."""
     prompt = generate_general_query_prompt(query, context)
     result = llm_provider.query(prompt)
     logger.info(f"LLM raw response (query-only): {result}")  # Log raw response
     return format_llm_response(result)  # Format the response
 
-
-def process_query_with_logs(
-    query: str,
-    log_insights_list: List[LogInsights],
-    llm_provider: LLMProvider,
-    context: Optional[List[Dict[str, Any]]] = None
-) -> str:
+def process_query_with_logs(query: str, session_data_list: List[Dict[str, Any]], llm_provider: LLMProvider, context:  Optional[List[Dict[str, Any]]] = None) -> str:
     """Handles query + logs requests.  Returns formatted HTML."""
-    prompt = generate_troubleshooting_prompt(query, log_insights_list, context)
-    logger.info(f"Prompt: {prompt}")  # Log out prompt
+    prompt = generate_troubleshooting_prompt(query, session_data_list, context)
+    logger.info(f"Prompt: {prompt}") # Log out prompt
     result = llm_provider.query(prompt)
-    # logger.info(f"LLM raw response (with logs): {result}") # Log raw response
-    return format_llm_response(result)  # Format result
+    logger.info(f"LLM raw response (with logs): {result}") # Log raw response
+    return format_llm_response(result) # Format result
 
-
-def generate_troubleshooting_prompt(
-    query: str,
-    analysis_results_list: List[LogInsights],
-    context: Optional[List[Dict[str, Any]]] = None
-) -> str:
+def generate_troubleshooting_prompt(query: str, session_data_list: List[Dict[str, Any]], context: Optional[List[Dict[str, Any]]] = None) -> str:
     """Formats the troubleshooting prompt, handling multiple data submissions."""
 
     context_string = format_context_for_prompt(context) if context else ""
-    data_summary = format_data_summary(analysis_results_list)
+    data_summary = format_data_summary(session_data_list)  # Pass the session data
 
     prompt = settings.troubleshooting_prompt.format(
-        user_query=query, data_summary=data_summary, context=context_string
+        user_query=query,
+        data_summary=data_summary,
+        context = context_string
     )
-    logger.debug(f"Troubleshooting prompt:\n{prompt}")  # VERY IMPORTANT LOG
     return prompt
-
 
 def generate_general_query_prompt(query: str, context: Optional[List[Dict[str, Any]]] = None) -> str:
     """Formats the general query prompt, including conversation history."""
     context_string = format_context_for_prompt(context) if context else ""
     prompt = settings.general_query_prompt.format(query=query, context=context_string)
     return prompt
-
 
 def format_context_for_prompt(context: List[Dict[str, Any]]) -> str:
     """Formats the conversation history for inclusion in the prompt."""
@@ -71,71 +58,42 @@ def format_context_for_prompt(context: List[Dict[str, Any]]) -> str:
     return formatted_context
 
 
-def process_data_summary(log_insights: LogInsights, llm_provider: LLMProvider) -> str:
-    """Generates an LLM-powered summary of the log analysis results."""
-    try:
-        log_data_string = format_log_data_for_summary(log_insights)
-        prompt = settings.log_summary_prompt.format(log_data=log_data_string)
-        result = llm_provider.query(prompt)
-        if result:
-            return result
-        else:
-            logger.error("LLM returned an empty response for data summary.")
-            return "Error: LLM returned an empty response."
-    except Exception as e:
-        logger.error(f"LLM data summary generation failed: {e}", exc_info=True)
-        return "Error generating data summary."
-
-
-def format_data_summary(log_insights_list: List[LogInsights]) -> str:
-    """Formats a list of LogInsights objects into a single string."""
+def format_data_summary(session_data_list: List[Dict[str, Any]]) -> str:
+    """Formats data from multiple log submissions into a single string for the prompt."""
     all_summaries = ""
-    for log_insights in log_insights_list:
-        summary = log_insights.summary  # Access .summary directly
-        all_summaries += f"- Log Summary: {summary}\n"
+    for session_entry in session_data_list:
+        data_type = session_entry.get('type', 'Unknown')  # Use type
+        content = session_entry.get('content', '')
+        llm_summary = session_entry.get('llm_summary', "No detailed summary available.")
 
-        anomalies = log_insights.anomalies
-        if anomalies:
-            all_summaries += "  - Detected Anomalies:\n"
-            for anomaly in anomalies:
-                all_summaries += f"    - {anomaly}\n"
+        all_summaries += f"- Data Type: {data_type}\n"
+        all_summaries += f"  - Summary: {llm_summary}\n"
 
-        level_counts = log_insights.level_counts
-        if level_counts:
-            all_summaries += "  - Categorized Logs (Counts):\n"
-            for category, count in level_counts.items():
-                all_summaries += f"    - {category}: {count}\n"
+        # Include log-specific details if available and relevant
+        if data_type == "log":  # Check the *original* data type
+            log_insights = session_entry.get('summary', {})  # Safely get insights
+            if log_insights:  # Check if insights exist
+                anomalies = log_insights.get("anomalies", [])
+                if anomalies:
+                    all_summaries += "  - Detected Anomalies:\n"
+                    for anomaly in anomalies:
+                        all_summaries += f"    - {anomaly}\n"
 
-        metrics = log_insights.metrics
-        if metrics:
-            all_summaries += "  - Metrics (Averages):\n"
-            for metric, value in metrics.items():
-                all_summaries += f"    - {metric}: {value}\n"
-    return all_summaries
+                level_counts = log_insights.get("level_counts", {})
+                if level_counts:
+                    all_summaries += "  - Categorized Logs (Counts):\n"
+                    for category, count in level_counts.items():
+                        all_summaries += f"    - {category}: {count}\n"
 
+                metrics = log_insights.get("metrics", {})
+                if metrics:
+                    all_summaries += "  - Metrics (Averages):\n"
+                    for metric, value in metrics.items():
+                        all_summaries += f"    - {metric}: {value}\n"
+        elif data_type == 'text':
+            all_summaries += f" - Text data: {content[:100]}...\n" # show a snippet
 
-def format_log_data_for_summary(log_insights: LogInsights) -> str:
-    """Formats LogInsights data for LLM summary."""
-    # Construct a string representation of the LogInsights data
-    summary = log_insights.summary  # Access fields directly
-
-    level_counts_str = ", ".join(
-        f"{level}: {count}" for level, count in log_insights.level_counts.items()
-    )
-    error_messages_str = ", ".join(log_insights.error_messages)
-    anomalies_str = ", ".join(log_insights.anomalies)
-    metrics_str = ", ".join(
-        f"{metric}: {value}" for metric, value in log_insights.metrics.items()
-    )
-
-    formatted_data = (
-        f"Summary: {summary}\n"
-        f"Severity Level Counts: {level_counts_str}\n"
-        f"Error Messages: {error_messages_str}\n"
-        f"Anomalies Detected: {anomalies_str}\n"
-        f"Metrics: {metrics_str}"
-    )
-    return formatted_data
+    return all_summaries.strip()  # Remove trailing whitespace
 
 
 # --- Helper functions for formatting ---
@@ -144,7 +102,6 @@ def sanitize_html(text: str) -> str:
     Sanitizes HTML content by escaping unsafe characters.
     """
     return html.escape(text)
-
 
 def format_json(parsed_response: Union[Dict, List]) -> str:
     """
@@ -175,7 +132,6 @@ def format_json(parsed_response: Union[Dict, List]) -> str:
 
     return formatted_output
 
-
 def format_plain_text(response_text: str) -> str:
     """
     Formats plain text into HTML, handling paragraphs, bullets, and numbered lists.
@@ -200,15 +156,13 @@ def format_plain_text(response_text: str) -> str:
 
         # Check for numbered list items at the start of the line
         if re.match(r"^\s*\d+\.\s*", line):
-            if in_bulleted_list:  # Close bullet list.
+            if in_bulleted_list: # Close bullet list.
                 formatted_output += "</ul>"
                 in_bulleted_list = False
             if not in_numbered_list:  # If not already in a list, start a new one
                 formatted_output += "<ol>"
                 in_numbered_list = True
-            formatted_output += (
-                f"<li>{line.lstrip('0123456789. ')}</li>"  # Add the <li> tag
-            )
+            formatted_output += f"<li>{line.lstrip('0123456789. ')}</li>" # Add the <li> tag
         # Check for bullet points at the start of the line.
         elif line.startswith("-") or line.startswith("*"):
             if in_numbered_list:
@@ -236,7 +190,6 @@ def format_plain_text(response_text: str) -> str:
 
     return formatted_output
 
-
 def format_llm_response(response_text: str) -> str:
     """
     Formats a raw LLM response into HTML.  Handles JSON (extracting from
@@ -253,9 +206,7 @@ def format_llm_response(response_text: str) -> str:
             response_text = match.group(1).strip()  # Extract *just* the JSON
 
         parsed_response = json.loads(response_text)
-        formatted_output =  format_json(parsed_response)  # Use the dedicated JSON formatter
-        print(f"Formatted JSON output: {formatted_output}") #DEBUG
-        return formatted_output
+        return format_json(parsed_response)  # Use the dedicated JSON formatter
 
     except json.JSONDecodeError:
         # If it's not JSON, use the plain text formatting

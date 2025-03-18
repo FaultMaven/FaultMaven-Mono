@@ -191,3 +191,190 @@ FaultMaven’s functionality is defined by several core areas, each addressing a
 ---
 
 This document serves as the foundation for designing and developing FaultMaven. These requirements will guide our technical design, development roadmap, and prioritization of features.
+
+
+##
+##
+##
+# update:
+# FaultMaven: AI-Driven Reliability Incident Resolution
+
+FaultMaven is an AI-powered software application designed to assist Site Reliability Engineers (SREs) in resolving reliability incidents efficiently. It leverages AI to guide users through troubleshooting, starting from alerts, tickets, or dashboard metrics, and iteratively refines its analysis until the root cause is identified and a solution is implemented.
+
+---
+
+## 1. Assumptions About Troubleshooting Starting Points
+
+FaultMaven assumes that reliability incidents can originate from three primary sources:
+
+### **1.1 Alerts**
+- **Description**: Automated alerts triggered by monitoring systems when predefined thresholds are breached.
+- **Examples**:
+  - High error rates (e.g., HTTP 500 errors > 5%).
+  - Latency spikes (e.g., P95 latency > 1s).
+  - Resource exhaustion (e.g., CPU > 90% for 5 minutes).
+
+### **1.2 Tickets**
+- **Description**: Issues reported by users or internal teams through support channels.
+- **Examples**:
+  - Users reporting errors via email, chat, or web forms.
+  - Internal teams (e.g., QA, developers) logging bugs or anomalies.
+
+### **1.3 Dashboard Metrics**
+- **Description**: Proactive monitoring of dashboards to spot anomalies that don’t trigger alerts.
+- **Examples**:
+  - Gradual increase in error rates.
+  - Unusual patterns in traffic or resource usage.
+
+---
+
+## 2. How the User Can Provide Data for Investigation
+
+FaultMaven allows users to submit data in multiple formats to facilitate investigation:
+
+### **2.1 Copy-Paste Text**
+- Users can copy and paste logs, error messages, or other text-based data directly into the chat interface.
+
+### **2.2 File Upload**
+- Users can upload files (e.g., log files, configuration files, screenshots) for analysis.
+
+### **2.3 Links to Dashboards or Ticketing Systems**
+- Users can share links to monitoring dashboards (e.g., Grafana, Datadog) or ticketing systems (e.g., Jira, ServiceNow) for real-time data access.
+
+### **2.4 Direct Integration (Future Feature)**
+- FaultMaven can integrate with monitoring tools (e.g., Prometheus, Splunk) and ticketing systems to fetch data automatically.
+
+---
+
+## 3. Steps for Troubleshooting
+
+FaultMaven follows a structured, iterative troubleshooting process:
+
+### **3.1 Define the Problem**
+- **Goal**: Clearly understand the issue and its impact.
+- **Actions**:
+  - Analyze the initial input (alert, ticket, or dashboard metrics).
+  - Confirm the issue with the user (e.g., "Are users experiencing login failures?").
+
+### **3.2 Gather Information**
+- **Goal**: Collect all relevant data to understand the issue.
+- **Actions**:
+  - Request logs, metrics, or other data from the user.
+  - Analyze the data to identify patterns or anomalies.
+
+### **3.3 Reproduce the Issue**
+- **Goal**: Confirm the issue and understand its behavior.
+- **Actions**:
+  - Guide the user to reproduce the issue in a controlled environment.
+  - Use simulations or test commands to validate the issue.
+
+### **3.4 Isolate the Root Cause**
+- **Goal**: Narrow down the potential causes of the issue.
+- **Actions**:
+  - Map system dependencies and test each component.
+  - Analyze logs and metrics to identify correlations.
+
+### **3.5 Formulate and Test Hypotheses**
+- **Goal**: Identify the most likely cause and validate it.
+- **Actions**:
+  - Suggest hypotheses based on the data (e.g., "The issue is caused by a memory leak").
+  - Guide the user to test each hypothesis (e.g., monitor memory usage).
+
+### **3.6 Implement a Fix**
+- **Goal**: Resolve the issue and restore normal operation.
+- **Actions**:
+  - Provide specific steps to implement the fix (e.g., update configuration, optimize queries).
+  - Validate the fix with the user.
+
+### **3.7 Monitor and Validate**
+- **Goal**: Ensure the issue is fully resolved and does not recur.
+- **Actions**:
+  - Guide the user to monitor metrics and logs post-fix.
+  - Confirm stability with the user.
+
+### **3.8 Document and Learn**
+- **Goal**: Prevent recurrence and improve processes.
+- **Actions**:
+  - Generate a postmortem report summarizing the issue, root cause, and resolution.
+  - Suggest action items for improvement (e.g., improve monitoring, add tests).
+
+---
+
+## 4. Interactions Between the User and AI
+
+FaultMaven facilitates **progressive, interactive troubleshooting sessions** between the user and AI. The interactions are designed to be **user-friendly, iterative, and action-oriented**.
+
+### **4.1 User Initiates the Session**
+- The user starts by describing the issue or sharing an alert, ticket, or dashboard link.
+
+### **4.2 AI Clarifies the Issue**
+- AI analyzes the input and asks for confirmation or additional context.
+- Example: "I see an alert for high HTTP 500 errors. Are users reporting login failures?"
+
+### **4.3 User Provides Data**
+- The user shares logs, metrics, or other relevant data (via copy-paste, file upload, or links).
+
+### **4.4 AI Analyzes and Guides**
+- AI processes the data, suggests hypotheses, and requests further information.
+- Example: "The logs show database connection failures. Let’s check the database logs."
+
+### **4.5 Iterative Process**
+- The user and AI continue exchanging information and refining the analysis until the root cause is identified and a solution is found.
+
+### **4.6 AI Provides a Solution**
+- AI offers specific steps to resolve the issue (e.g., update configuration, optimize queries).
+- Example: "Here’s how to add an index to the database: `CREATE INDEX idx_email ON users(email);`."
+
+### **4.7 AI Validates the Fix**
+- AI guides the user to test the fix and confirm resolution.
+- Example: "Run this command to test the query: `EXPLAIN ANALYZE SELECT * FROM users WHERE email = 'test@example.com';`."
+
+### **4.8 AI Confirms Resolution**
+- AI confirms that the issue is resolved and provides follow-up recommendations.
+- Example: "The error rates are back to normal. Let’s document the root cause and solution."
+
+---
+
+## 5. Example Workflow
+
+### **Scenario**: High error rates (starting from an alert).
+
+1. **User**: "I just got an alert about high HTTP 500 errors. Can you help me troubleshoot?"
+2. **AI**: "Sure! Are users reporting any problems, like login failures?"
+3. **User**: "Yes, users are reporting login failures."
+4. **AI**: "Let’s check the application logs. Could you share them for the last 30 minutes?"
+5. **User**: [Uploads logs]
+6. **AI**: "The logs show database connection failures. Let’s check the database logs."
+7. **User**: [Uploads database logs]
+8. **AI**: "The database logs indicate the connection pool is exhausted. Let’s optimize the queries."
+9. **User**: "Yes, let’s optimize the queries."
+10. **AI**: "Here’s how to add an index to the database: `CREATE INDEX idx_email ON users(email);`."
+11. **User**: "Done. I added the index."
+12. **AI**: "Great! Let’s test the query. Run this command: `EXPLAIN ANALYZE SELECT * FROM users WHERE email = 'test@example.com';`."
+13. **User**: [Shares the result] "Execution time: 0.2ms."
+14. **AI**: "The issue is resolved. Monitor the metrics to confirm stability."
+
+---
+
+## 6. Key Features of FaultMaven
+
+- **Proactive Analysis**: AI analyzes data and shares insights without waiting for specific questions.
+- **User-Driven Guidance**: AI adapts its guidance based on user inputs and requests.
+- **Flexible Data Submission**: Users can submit data via copy-paste, file upload, or links.
+- **Iterative Troubleshooting**: The session progresses step by step until the issue is resolved.
+- **Action-Oriented**: AI provides specific commands, tools, or steps for the user to execute.
+
+---
+
+## 7. Future Enhancements
+
+- **Automated Data Fetching**: Integrate with monitoring and ticketing systems to fetch data automatically.
+- **Machine Learning**: Use ML to predict root causes and suggest fixes based on historical data.
+- **Collaboration Features**: Allow multiple users to collaborate on the same troubleshooting session.
+- **Knowledge Base**: Build a repository of resolved incidents for future reference.
+
+---
+
+## 8. Conclusion
+
+FaultMaven is designed to streamline reliability incident resolution by combining AI-driven analysis with user-friendly interactions. By following a structured, iterative approach, FaultMaven empowers SREs to quickly identify and resolve issues, ensuring system reliability and minimizing downtime.

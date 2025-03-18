@@ -41,40 +41,52 @@ class Settings(BaseSettings):
     ibm_granite_model: str = Field("granite-13b-instruct", env="IBM_GRANITE_MODEL")
     ibm_granite_api_url: Optional[str] = Field(None, env="IBM_GRANITE_API_URL")
 
-   # Log summary prompt
+    # Log summary prompt (Corrected)
     log_summary_prompt: str = (
-        "You are a log analysis expert. Summarize the following log data in a single, concise paragraph. "
-        "Highlight key observations, trends, anomalies, and potential issues. "
-        "Avoid unnecessary technical jargon. Maximum length: 150 words.\n\n"
+        "Summarize the following log data concisely, focusing on key observations, trends, anomalies, and potential issues. "
+        "Limit the summary to 150 words.\n\n"
         "**Log Data:**\n{log_data}\n\n"
-        "**Key Insights:**" # Changed
+        "**Key Insights:**"  # Clear output marker
     )
 
+    # General query prompt (Corrected)
     general_query_prompt: str = (
         "You are FaultMaven, a highly skilled SRE and DevOps expert. "
-        "Provide a concise and informative answer to the following general question related to Site Reliability Engineering, DevOps, "
-        "system administration, cloud computing, or related technical fields. "
-        "Assume the user is a technical professional with foundational knowledge. "
-        "Focus on providing a clear explanation, best practices, and examples where appropriate. "
-        "Use bullet points or numbered lists for clarity if applicable. Keep responses under 200 words.\n\n"
+        "Provide a concise and informative answer to the following question. "
+        "Assume the user is a technical professional. "
+        "Use bullet points or numbered lists if applicable. Keep responses under 200 words.\n\n"
         "**Conversation History:**\n"
         "{context}\n\n"
-        "**User:** {query}\n\n"  # Use "User:"
-        "**Assistant:**"  # Use "Assistant:"
+        "**User:** {query}\n\n" # User:
+        "**Assistant:**"  # Assistant:
     )
+    # Troubleshooting prompt (Corrected)
     troubleshooting_prompt: str = (
         "You are FaultMaven, an expert troubleshooting assistant specializing in Site Reliability Engineering (SRE) and DevOps. "
         "Analyze the provided system data and user question to determine the MOST LIKELY root cause. "
         "Provide concise, actionable next steps ONLY when supported by the data and directly relevant to the user's question. "
-        "Your response MUST be valid JSON with an 'answer' string, and an optional 'action_items' list of strings. Invalid JSON is not acceptable.\n\n"
+        "Your response MUST be valid JSON. Invalid JSON is not acceptable.\n\n"
         "**Conversation History:**\n"
         "{context}\n\n"
         "**User:** {user_query}\n\n"
-        "**System Data Summary:**\n"
-        "{data_summary}\n\n"
-        "**JSON Response:**"
+        "**System Data Summary:**\n{data_summary}\n\n"
     )
-    
+
+
+    # Data classification prompt
+    data_classification_prompt: str = (
+        "Classify the following data into ONE of these categories: log, metric, config, text, or unknown.\n"
+        "Return ONLY the category name. Do NOT return anything else.\n\n"
+        "Data:\n`\n{data}\n`\n\n"
+        "Category:"
+    )
+    # Prompt for text analysis
+    text_analysis_prompt: str = (
+        "Summarize and analyze the following text. Identify any key topics, entities, or potential issues. "
+        "If the text appears to be related to a technical problem, suggest possible causes or troubleshooting steps.\n\n"
+        f"Text:\n`\n{{data}}\n`"
+    )
+
     error_rate_anomaly_threshold_factor: float = 2.0
     min_data_points_for_anomaly_detection: int = 3
     metric_anomaly_threshold_std_dev: float = 2.0
