@@ -117,4 +117,4 @@ Stay updated on our progress via the [Roadmap](docs/roadmap.md).
 
 ## 📬 Contact
 For inquiries, reach out via:  
-📧 [sterlanyu@gmail.com](mailto:sterlanyu@gmail.com)
+📧 [sterlan.yu@faultmaven.ai](mailto:sterlan.yu@faultmaven.ai)
