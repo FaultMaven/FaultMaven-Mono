@@ -1,105 +1,131 @@
+# tests/test_query_processing.py
+"""
+API tests for the FastAPI application endpoints defined in app.query_processing.
+Uses FastAPI's TestClient and mocks underlying service functions.
+"""
+
 import pytest
 from fastapi.testclient import TestClient
-from app.query_processing import app, QueryRequest, FeedbackRequest, process_logs
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, AsyncMock # For mocking async functions later
 
-# Initialize FastAPI TestClient
-client = TestClient(app)
+# Import the FastAPI app instance FROM app.query_processing
+from app.query_processing import app
+# Import Pydantic models needed FROM app.models
+from app.models import (
+    DataInsightsResponse, # Use this for /data responses
+    TroubleshootingResponse,
+    FeedbackRequest,
+    DataType,
+    LogInsights # Import if needed for creating mock results
+    # QueryRequest will be tested implicitly via /query tests
+)
 
-### **Test Data**
-SAMPLE_LOGS = "2023-10-01 ERROR: Disk full"
-SAMPLE_QUERY = "Why is the disk full?"
-SAMPLE_FEEDBACK = {"query": SAMPLE_QUERY, "feedback": "The response was helpful."}
+# --- Test Client Fixture ---
+@pytest.fixture(scope="module")
+def client():
+    """Provides a FastAPI TestClient instance."""
+    # Using context manager handles startup/shutdown events if defined in app
+    with TestClient(app) as test_client:
+        yield test_client
 
-### **Mocked Dependencies**
-@pytest.fixture
-def mock_dependencies():
-    with patch("app.query_processing.normalize_data") as mock_normalize_data, \
-         patch("app.query_processing.analyze_logs_metrics") as mock_analyze_logs, \
-         patch("app.query_processing.process_query") as mock_process_query, \
-         patch("app.query_processing.process_query_with_logs") as mock_process_query_with_logs, \
-         patch("app.query_processing.update_session_learning") as mock_update_learning:
-        yield {
-            "normalize_data": mock_normalize_data,
-            "analyze_logs": mock_analyze_logs,
-            "process_query": mock_process_query,
-            "process_query_with_logs": mock_process_query_with_logs,
-            "update_learning": mock_update_learning,
-        }
+# === Basic Endpoint Tests ===
 
-### **Test Cases**
-def test_process_logs():
-    """Test the `process_logs` helper function."""
-    with patch("app.query_processing.normalize_data", return_value="normalized_logs"), \
-         patch("app.query_processing.analyze_logs_metrics", return_value={"insight": "disk_full"}):
-        result = process_logs(SAMPLE_LOGS)
-        assert result == {"insight": "disk_full"}
-
-def test_handle_query_no_input():
-    """Test the `/query` endpoint with no input."""
-    response = client.post("/query", json={})
+def test_read_root(client: TestClient):
+    """Test the root GET endpoint."""
+    response = client.get("/")
     assert response.status_code == 200
-    assert response.json() == {"response": "How may I help you?"}
+    # --- CORRECTED ASSERTION ---
+    # Verify the message matches the one actually returned by app/query_processing.py
+    assert response.json() == {"message": "FaultMaven API is running."}
 
-def test_handle_query_logs_only(mock_dependencies):
-    """Test the `/query` endpoint with logs only."""
-    mock_dependencies["normalize_data"].return_value = "normalized_logs"
-    mock_dependencies["analyze_logs"].return_value = {"insight": "disk_full"}
+def test_handle_feedback_placeholder(client: TestClient):
+    """Test the placeholder /feedback endpoint returns the correct static response."""
+    # Prepare valid request data using the Pydantic model
+    feedback_data = FeedbackRequest(
+        query="Why did it crash last night?",
+        feedback="The analysis of the logs was spot on, thanks!"
+    ).model_dump() # Use model_dump() for Pydantic V2+
 
-    response = client.post("/query", json={"logs": SAMPLE_LOGS})
+    # Make the POST request
+    response = client.post("/feedback", json=feedback_data)
+
+    # Assert the expected placeholder response
     assert response.status_code == 200
-    assert response.json() == {"response": {"insight": "disk_full"}}
+    assert response.json() == {"status": "Feedback endpoint not currently active."}
 
-def test_handle_query_query_only(mock_dependencies):
-    """Test the `/query` endpoint with query only."""
-    mock_dependencies["process_query"].return_value = {"response": "Disk is full."}
+# === Tests for POST /data ===
 
-    response = client.post("/query", json={"query": SAMPLE_QUERY})
-    assert response.status_code == 200
-    assert response.json() == {"response": {"response": "Disk is full."}}
+# TODO: Add tests for POST /data endpoint
+# Example test structure for successful text upload:
+# @pytest.mark.asyncio
+# async def test_handle_data_success_text(client: TestClient, mocker):
+#     mock_session = "session-data-text"
+#     # Mock the return value of the classifier
+#     mock_classify_result = DataClassification(data_type=DataType.TEXT, confidence=0.9, key_features=["Keywords"], suggested_tool="...")
+#     # Mock the return value of the text processor
+#     mock_text_result = {"summary": "Mock text summary"}
+#     # Mock the function that adds data to session (doesn't need return value)
+#     mock_add_data = mocker.patch("app.query_processing.add_data_to_session")
+#
+#     # Patch the functions called by the endpoint handler
+#     mocker.patch("app.query_processing.get_or_create_session", return_value=mock_session)
+#     mocker.patch("app.query_processing.classify_data", new_callable=AsyncMock, return_value=mock_classify_result)
+#     mocker.patch("app.query_processing.process_text_data", new_callable=AsyncMock, return_value=mock_text_result)
+#     # Mock other processors if they could be called (or ensure they aren't)
+#     mocker.patch("app.query_processing.process_logs_data", new_callable=AsyncMock) # Example
+#
+#     # Simulate sending form data
+#     response = client.post("/data", data={"text": "This is test text"})
+#
+#     # Assertions
+#     assert response.status_code == 200
+#     resp_json = response.json()
+#     assert resp_json["session_id"] == mock_session
+#     assert resp_json["classified_type"] == DataType.TEXT.value
+#     assert "Insights provided" in resp_json["message"] # Or similar based on endpoint logic
+#     assert resp_json["insights"] == mock_text_result
+#     # Check add_data_to_session was called once
+#     mock_add_data.assert_called_once()
+#     # Optionally: inspect the UploadedData object passed to add_data_to_session
+#     # args, _ = mock_add_data.call_args ... assert args[1].processed_results == mock_text_result ...
 
-def test_handle_query_combined(mock_dependencies):
-    """Test the `/query` endpoint with both query and logs."""
-    mock_dependencies["normalize_data"].return_value = "normalized_logs"
-    mock_dependencies["analyze_logs"].return_value = {"insight": "disk_full"}
-    mock_dependencies["process_query_with_logs"].return_value = {"response": "Disk is full due to logs."}
 
-    response = client.post("/query", json={"query": SAMPLE_QUERY, "logs": SAMPLE_LOGS})
-    assert response.status_code == 200
-    assert response.json() == {"response": {"response": "Disk is full due to logs."}}
+# === Tests for POST /query ===
 
-def test_handle_query_invalid_logs(mock_dependencies):
-    """Test the `/query` endpoint with invalid logs."""
-    mock_dependencies["normalize_data"].return_value = None  # Simulate invalid logs
-
-    response = client.post("/query", json={"logs": "invalid_logs"})
-    assert response.status_code == 400
-    assert "Invalid log format" in response.json()["detail"]
-
-def test_handle_feedback(mock_dependencies):
-    """Test the `/feedback` endpoint."""
-    response = client.post("/feedback", json=SAMPLE_FEEDBACK)
-    assert response.status_code == 200
-    assert response.json() == {"status": "Feedback received"}
-    mock_dependencies["update_learning"].assert_called_once_with(SAMPLE_FEEDBACK)
-
-def test_handle_feedback_invalid_input():
-    """Test the `/feedback` endpoint with invalid input."""
-    response = client.post("/feedback", json={"query": "", "feedback": ""})
-    assert response.status_code == 422  # Pydantic validation error
-
-def test_handle_query_internal_error(mock_dependencies):
-    """Test the `/query` endpoint with an internal error."""
-    mock_dependencies["process_query"].side_effect = Exception("Internal error")
-
-    response = client.post("/query", json={"query": SAMPLE_QUERY})
-    assert response.status_code == 500
-    assert "Internal server error" in response.json()["detail"]
-
-def test_handle_feedback_internal_error(mock_dependencies):
-    """Test the `/feedback` endpoint with an internal error."""
-    mock_dependencies["update_learning"].side_effect = Exception("Internal error")
-
-    response = client.post("/feedback", json=SAMPLE_FEEDBACK)
-    assert response.status_code == 500
-    assert "Internal server error" in response.json()["detail"]
+# TODO: Add tests for POST /query endpoint
+# Example test structure:
+# @pytest.mark.asyncio
+# async def test_handle_query_success(client: TestClient, mocker):
+#     mock_session = "session-query-1"
+#     # Mock memory object if needed, or just its methods if called directly
+#     mock_memory = MagicMock(spec=ConversationBufferMemory)
+#     # Mock the data retrieved for the session
+#     mock_data_list = [UploadedData( # Use actual model
+#          classified_type=DataType.SYSTEM_LOGS,
+#          processing_status="Processed",
+#          processed_results=LogInsights(summary="Mock log summary for query")
+#     )]
+#     # Mock the expected response from the core AI logic
+#     mock_ai_response = TroubleshootingResponse(answer="AI answer based on log summary", action_items=None)
+#
+#     # Patch the functions called by the endpoint handler
+#     mocker.patch("app.query_processing.get_or_create_session", return_value=mock_session)
+#     mocker.patch("app.query_processing.get_memory_for_session", return_value=mock_memory)
+#     mocker.patch("app.query_processing.get_data_for_session", return_value=mock_data_list)
+#     mock_process_query = mocker.patch("app.query_processing.process_user_query", new_callable=AsyncMock, return_value=mock_ai_response)
+#
+#     # Make the request
+#     response = client.post("/query", json={"query": "Analyze the logs"}, headers={"X-Session-ID": mock_session})
+#
+#     # Assertions
+#     assert response.status_code == 200
+#     # Check response body against the Pydantic model's dictionary representation
+#     assert response.json() == mock_ai_response.model_dump()
+#     assert response.headers.get("X-Session-ID") == mock_session
+#     # Check process_user_query was called correctly
+#     mock_process_query.assert_awaited_once_with(
+#         session_id=mock_session,
+#         query="Analyze the logs",
+#         memory=mock_memory,
+#         data_list=mock_data_list
+#     )

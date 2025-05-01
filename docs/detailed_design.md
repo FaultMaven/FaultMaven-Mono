@@ -422,3 +422,467 @@ This section details potential future improvements and additions to FaultMaven, 
     * **Ticketing System:**
 
 This enhanced section provides a more structured and detailed roadmap for FaultMaven's future development, aligning with the core principles and addressing potential challenges.  It covers both immediate improvements and long-term goals. The focus remains on building a practical, user-friendly tool that leverages the power of LLMs for efficient troubleshooting, while acknowledging the limitations and complexities of such a system.
+
+
+
+---
+---
+---
+4/23/2025
+# FaultMaven System Design
+
+## 1. Introduction
+
+FaultMaven is an AI-powered troubleshooting assistant designed for Site Reliability Engineers (SREs) and DevOps professionals. It aims to accelerate issue diagnosis and resolution by analyzing system data (logs, metrics, configuration, text) and providing contextual insights and actionable recommendations through a conversational interface.
+
+This document outlines the internal architecture of the FaultMaven backend application, built primarily using Python with FastAPI and LangChain.
+
+**Key Technologies:**
+
+- **Backend Framework:** FastAPI  
+- **Core AI/LLM Orchestration:** LangChain  
+- **LLM Providers:** OpenAI API, Hugging Face Endpoints, Local ONNX Runtime (via custom wrapper), Ollama (potential)  
+- **Data Structures:** Pydantic  
+- **Specialized Tools:** Vector (for log parsing via subprocess)  
+- **Configuration:** Pydantic-Settings (`.env` file)  
+
+## 2. Core Design Principles & Development Focus
+
+Based on the understanding that FaultMaven's ultimate capability is a combination of the underlying Language Model (LLM) chosen (P1) and the application's ability to provide relevant context and manage state (P2), the following principles guide the development effort:
+
+### 2.1. Focus on Context, Processing, and Prompting
+**Principle:** The primary engineering focus should be on building robust and intelligent mechanisms for session context management, specialized data processing, and sophisticated prompt engineering.  
+**Rationale:** FaultMaven's unique value proposition and its ability to outperform generic LLMs stems directly from its capacity to augment a capable LLM with relevant, timely, and processed domain-specific context (P2).  
+- **Specialized Data Processing:** (e.g., using vector for logs, analyzing metrics, processing MCP data) creates structured insights and summaries that provide far more signal than raw data alone.  
+- **Context Management:** (conversation history, storage/retrieval of processed data results) ensures the LLM has the necessary information readily available (P2).  
+- **Prompt Engineering:** Guides the LLM to effectively utilize this rich context, reason about SRE/DevOps problems, adhere to desired output structures (like TroubleshootingResponse), and potentially ask clarifying questions.  
+While the underlying LLM's capability sets a performance ceiling (P1), the application framework surrounding it is where unique value and differentiation are engineered. The goal is to build a system that effectively leverages a sufficiently capable LLM.  
+**Implementation:** This focus is reflected in modules like `app/session_management`, `app/data_classifier`, `app/log_metrics_analysis`, `app/mcp_processor`, and critically within `app/chains` where prompts, context formatting (`format_uploaded_data`), and core LLM orchestration (`process_user_query`) reside.
+
+### 2.2. LLM Agnosticism and Flexibility
+**Principle:** The architecture must support switching between different underlying LLM models and providers (e.g., OpenAI API, Hugging Face, local models via Ollama or custom wrappers) with minimal friction, ideally through configuration changes.  
+**Rationale:** The LLM landscape is dynamic. Different models offer varying performance, cost, features, and deployment options (P1). To ensure FaultMaven remains adaptable and practical across different environments (cloud, on-premise, air-gapped) and budgets, it must not be tightly coupled to a single LLM provider or model.  
+**Implementation:**  
+- `config/settings.py`: Allowing selection of `chat_provider` and `classifier_provider`.  
+- `app/llm_provider.py`: Abstracting the instantiation logic using the `_get_llm_instance` helper, which returns standardized LangChain objects (`BaseChatModel` or `LLM`) based on the configured provider.  
+- **LangChain:** The framework itself provides standardized interfaces for interacting with different LLMs.
+
+### 2.3. Leverage Modern, Effective Frameworks
+**Principle:** Development should maximize the capabilities of chosen core frameworks: FastAPI, Pydantic, and LangChain.  
+**Rationale:** Building robust, scalable, and maintainable AI applications requires leveraging well-designed foundations.  
+- **FastAPI:** Provides a high-performance, async-native API layer well-suited for I/O-bound operations like external API calls (LLMs, MCP) and potentially streaming responses.  
+- **Pydantic:** Ensures data validation and clear data structures throughout the application, crucial for reliable interactions between components and APIs.  
+- **LangChain:** Offers essential abstractions and building blocks for LLM applications, including model integrations (supporting Principle 2), memory management (supporting P2), prompt templating, output parsing, and advanced features like Agents and Tool use (supporting Principle 4).  
+Staying aligned with these active and growing ecosystems accelerates development and allows FaultMaven to benefit from new features and community support.  
+**Implementation:** These frameworks form the backbone of the application structure (`query_processing`, `models`, `chains`, `llm_provider`, `session_management`).
+
+### 2.4. Extensibility via Tool Integration
+**Principle:** The design must be open and flexible, allowing straightforward integration of new specialized data processing tools or external data sources, with a view towards potential dynamic tool selection by the AI in the future.  
+**Rationale:** FaultMaven's effectiveness as a specialized assistant hinges on its ability to go beyond generic text processing and interact with or analyze domain-specific data using appropriate methods (P2). This could involve parsing specific log formats (vector), querying monitoring systems (e.g., Prometheus via an API call), interacting with custom protocols (MCP), or retrieving information from internal knowledge bases (RAG). Designing for extensibility ensures FaultMaven can adapt to new tools and data sources over time. The concept of dynamic tool use via AI agents represents a significant pathway to enhanced capability.  
+**Implementation:** The modular structure supports adding new processing modules (like `app/log_metrics_analysis.py`, `app/mcp_processor.py`). LangChain's "Tool" and "Agent" abstractions provide a clear framework for implementing dynamic tool usage in later development phases.
+
+## 3. Architecture Overview
+
+FaultMaven currently operates as a **monolithic application** with a modular design to facilitate future scaling and potential transition to microservices. The core is a FastAPI application that exposes HTTP endpoints for user interaction.
+
+The application separates concerns into distinct Python modules within the `app` package:
+
+- **API Layer:** Handles incoming HTTP requests, request validation, and orchestrates calls to underlying services/logic.  
+- **Core Logic (Chains):** Encapsulates the main LangChain logic for processing user queries, managing prompts, interacting with the primary LLM, and parsing responses.  
+- **LLM Abstraction:** Provides configured instances of LangChain LLM objects for different providers and different tasks.  
+- **Session Management:** Manages user session state, including conversation history and uploaded/processed data (currently in memory).  
+- **Data Handling:** Classifies and preprocesses uploaded data using heuristics, LLMs, or subprocess tools like Vector.  
+- **Shared Models:** Pydantic models and Enums for request/response and internal data.  
+- **Configuration & Utilities:** Pydantic-based config and application-wide logging.  
+
+### Core Interaction Flows
+
+1. **Data Submission (`/data`)**  
+   Upload → Classify → Analyze → Summarize → Store
+
+2. **Querying (`/query`)**  
+   User query → Fetch session context → Prompt → Generate answer → Return response
+
+## 4. System Diagram (Component Interactions)
+
+```mermaid
+graph TD
+    %% User Interaction Section
+    subgraph User_Interaction
+        User -- HTTP Request --> FMApi
+        User -- Data Files --> FMApi
+    end
+
+    %% External Services Section
+    subgraph External_Services
+        CloudLLM[Cloud LLMs: OpenAI, HF]
+        LocalPhi3[Local Phi-3 Server: phi3_server.py]
+        Vector[Vector Tool: subprocess]
+        MCPServer[MCP Server: HTTP]
+    end
+
+    %% FaultMaven App Section
+    subgraph FaultMaven_App
+        FMApi["app/query_processing.py\nFastAPI App / Endpoints"] -- Uses --> SessionMgmt
+        FMApi -- Calls --> Classifier
+        FMApi -- Calls --> Processors
+        FMApi -- Calls --> Chains
+
+        Classifier["app/data_classifier.py\nHeuristics + LLM Classifier"] -- Uses --> LLMProvider[classifier_llm]
+        Classifier -- Uses --> Models
+
+        Processors["app/log_metrics_analysis.py\napp/mcp_processor.py\n..."] -- Calls --> Vector
+        Processors -- Calls --> MCPServer
+        Processors -- Uses --> LLMProvider[llm for summary]
+        Processors -- Uses --> Models
+
+        Chains["app/chains.py\nCore Query Logic / Chain"] -- Uses --> LLMProvider[llm]
+        Chains -- Uses --> SessionMgmt[Memory]
+        Chains -- Uses --> Models
+
+        LLMProvider["app/llm_provider.py\nLLM Instances / Wrappers"] -- Calls --> CloudLLM
+        LLMProvider -- Calls --> LocalPhi3
+
+        SessionMgmt["app/session_management.py\nMemory + Data Store"] -- Manages --> InMemoryStores["In-Memory Dicts:\nHistory + Processed Data"]
+        SessionMgmt -- Uses --> Models
+
+        Models["app/models.py\nPydantic Models / Enums"]
+
+        Config["config/settings.py\nConfiguration"]
+        Logger["app/logger.py\nLogging"]
+
+        FMApi -- Uses --> Config
+        FMApi -- Uses --> Logger
+        Chains -- Uses --> Logger
+        SessionMgmt -- Uses --> Config
+        SessionMgmt -- Uses --> Logger
+        LLMProvider -- Uses --> Config
+        LLMProvider -- Uses --> Logger
+        Classifier -- Uses --> Logger
+        Processors -- Uses --> Config
+        Processors -- Uses --> Logger
+    end
+
+    %% Node Styling
+    style User fill:#f9f,stroke:#333,stroke-width:2px
+    style CloudLLM fill:#ccf,stroke:#333,stroke-width:1px
+    style LocalPhi3 fill:#ccf,stroke:#333,stroke-width:1px
+    style Vector fill:#ccf,stroke:#333,stroke-width:1px
+    style MCPServer fill:#ccf,stroke:#333,stroke-width:1px
+    style InMemoryStores fill:#ff9,stroke:#333,stroke-width:1px,stroke-dasharray: 5 5
+```
+
+## 5. Module Descriptions
+
+Each module's responsibilities and key dependencies:
+
+- **app/query_processing.py**: Handles HTTP endpoints. Calls `session_management`, `data_classifier`, and `chains`.  
+- **app/chains.py**: Builds LangChain prompts using memory and session context.  
+- **app/llm_provider.py**: Configures LangChain `llm` and `classifier_llm` instances.  
+- **app/session_management.py**: Tracks conversation history and uploaded content.  
+- **app/data_classifier.py**: Applies heuristics or LLMs to identify data types.  
+- **app/log_metrics_analysis.py**: Uses external tools (e.g., Vector) to analyze logs.  
+- **app/mcp_processor.py** *(planned)*: Sends data to an external MCP server and returns results.  
+- **app/models.py**: Central repository of Pydantic models and enums.  
+- **config/settings.py**: Loads environment config using Pydantic.  
+- **app/logger.py**: Central logging configuration.  
+- **app/main.py**: Entrypoint for Uvicorn server execution.  
+
+## 6. Interaction Flows
+
+### 6.1 Data Submission (POST `/data`)
+
+1. User sends a file or text.
+2. Server classifies data type using `data_classifier.classify_data()`.
+3. Based on the type:
+   - Logs → `log_metrics_analysis.process_logs_data()`
+   - RCA → `mcp_processor.process_mcp_data()`
+   - Text → `log_metrics_analysis.process_text_data()`
+4. `UploadedData` created and stored in session.
+5. Response returned to user with summary.
+
+### 6.2 Querying (POST `/query`)
+
+1. User sends a query with session ID.
+2. Session memory and processed data are loaded.
+3. LangChain chain is invoked with context.
+4. Answer and suggestions returned to the user.
+
+## 7. Configuration
+
+- Uses `.env` file and environment variables.
+- Managed via `config/settings.py`.
+- Includes settings for:
+  - LLM providers (OpenAI, Ollama)
+  - API keys
+  - Timeout and thresholds
+
+## 8. Future Considerations
+
+- Migrate from in-memory to Redis or DB for state persistence.
+- Break into microservices (SessionService, ChainService, etc.).
+- Add LangChain agents for more interactive automation.
+- Improve error handling and external call resilience.
+- Add observability: metrics, logs, structured traces.
+
+## 9. Conclusion
+
+FaultMaven uses a modular FastAPI and LangChain architecture to analyze system data and support DevOps workflows. Its in-memory stateful design is sufficient for prototyping but is structured to evolve into scalable microservices. The AI assistant integrates classification, analysis, memory, and LLM prompt composition to provide highly contextual answers for incident resolution.
+
+
+---
+---
+---
+4/25/2025
+## Data Submission Formats (Text, File, URL)
+
+### Requirement:
+The backend (`/data` endpoint) needs to handle data submitted in three distinct ways from the UI.
+
+### Analysis & Design Impact:
+
+#### 1. **Text (Form data):**
+- **Implementation:** Matches the current implementation (`text: Optional[str] = Form(None)`).
+- **Backend Behavior:** The backend receives a simple string.  
+- **Status:** Covered.
+
+#### 2. **File (UploadFile):**
+- **Implementation:** Matches the current implementation (`file: Optional[UploadFile] = File(None)`).
+- **Backend Behavior:** The backend receives a file object.  
+- **Improvement Needed:**  
+  - Currently, the code assumes the file is UTF-8 text (`contents.decode("utf-8")`).
+  - To handle various file types (PDF, Word, potentially images later?), the `/data` endpoint logic needs to be enhanced:
+    - Inspect `file.content_type` or `file.filename` extension.
+    - Use appropriate libraries (`pypdf2`, `python-docx`, etc.) to extract relevant text content or structured data.
+    - Temporarily save the raw file if needed.
+
+#### 3. **URL (Browser Context - New Requirement):**
+- **Implementation:** A new requirement significantly different from the other formats.
+- **Backend Behavior:** This is "dynamically delivered as structured data and metadata."
+  - Likely involves a browser extension or client-side script packaging context (DOM elements, metadata, selected text) as a JSON object and sending it.
+- **Design Implications:**  
+  - Handle the structured JSON data in the `/data` endpoint.
+  - Ensure seamless classification/processing integration using this context.
+
+---
+
+## Data Content Types & Processing
+
+### Requirement:
+Classify content into specific categories (Problem Statements, Logs, Metrics, Configs, Source Code) to enable correct processing and contextual understanding.
+
+### Refined Data Types and Processing:
+Based on your input (problem statements, logs, metrics, configs, source code, potential MCP data) and the goal of routing to specific processing:
+
+#### **DataType.PROBLEM_STATEMENT** *(Replaces ROOT_CAUSE_ANALYSIS)*  
+**Input Examples:**  
+Slack messages, incident tickets/reports, user descriptions of issues, RCA documents.  
+
+**Processing Goal:**  
+Extract key entities, summarize the issue, identify stated impact or actions already taken.  
+
+**Method:**  
+Primarily LLM-based analysis. Use `process_text_data` (or a new dedicated `process_problem_statement` function using a tailored LLM chain) in `app/log_metrics_analysis.py`.  
+
+**Result Stored:**  
+Dictionary with summary, extracted entities, etc.  
+Example: `{"summary": "...", "entities": [...]}`  
+
+---
+
+#### **DataType.SYSTEM_LOGS** *(Was log)*  
+**Input Examples:**  
+Syslog, application logs (JSON, plain text).  
+
+**Processing Goal:**  
+Parse structure, count severities, extract errors/anomalies, calculate basic metrics, generate LLM summary.  
+
+**Method:**  
+External tool (vector) + programmatic analysis + LLM summary. Use `process_logs_data` in `app/log_metrics_analysis.py`.  
+
+**Result Stored:**  
+LogInsights Pydantic model.  
+
+---
+
+#### **DataType.MONITORING_METRICS** *(Was metric)*  
+**Input Examples:**  
+CSV files, Prometheus exposition format text, JSON metrics.  
+
+**Processing Goal:**  
+Parse metrics, calculate key statistics (avg, min, max, rate), potentially identify statistical outliers or trends.  
+
+**Method:**  
+Placeholder `process_metrics_data` in `app/log_metrics_analysis.py`. Would likely use libraries like pandas or specific parsers depending on format. Could involve basic statistical analysis or anomaly detection algorithms.  
+
+**Result Stored:**  
+Dictionary with statistics.  
+Example: `{"avg_latency": 150.5, "error_rate": 0.05}`  
+
+---
+
+#### **DataType.CONFIGURATION_DATA** *(Was config)*  
+**Input Examples:**  
+YAML, JSON, XML, `.properties`, Terraform files.  
+
+**Processing Goal:**  
+Validate syntax, extract key parameters, potentially compare against known good configurations or check for security issues.  
+
+**Method:**  
+Placeholder `process_config_data` in `app/log_metrics_analysis.py`. Would use appropriate parsers (PyYAML, json, xml.etree.ElementTree) and potentially linters or comparison logic.  
+
+**Result Stored:**  
+Dictionary with extracted info or validation results.  
+Example: `{"valid_syntax": true, "key_params": {...}}`  
+
+---
+
+#### **DataType.SOURCE_CODE** *(New)*  
+**Input Examples:**  
+Python, Java, Go files, shell scripts, potentially diffs or pull requests.  
+
+**Processing Goal:**  
+Identify language, summarize functions/classes, potentially lint or identify code smells, or interact with a specialized tool like your MCP server if it analyzes code.  
+
+**Method:**  
+Requires a new placeholder `process_source_code` (e.g., in a new `app/code_analyzer.py`). This could call the MCP server API, use basic regex, use libraries like tree-sitter for parsing, or use an LLM for summarization.  
+
+**Result Stored:**  
+Dictionary with analysis results.  
+Example: `{"language": "python", "summary": "Contains 3 functions...", "mcp_result": {...}}`  
+
+---
+
+#### **DataType.MCP** *(Kept, for data specifically meant for MCP if not source code)*  
+**Input Examples:**  
+Data formatted specifically for your MCP tool/server that isn't classified as source code.  
+
+**Processing Goal:**  
+Get processed results directly from the MCP server.  
+
+**Method:**  
+Use `process_mcp_data` in `app/mcp_processor.py` to call the MCP server API.  
+
+**Result Stored:**  
+Dictionary containing the response from the MCP server.  
+
+---
+
+#### **DataType.TEXT** *(Generic Fallback)*  
+**Input Examples:**  
+Plain text that doesn't fit other categories.  
+
+**Processing Goal:**  
+Provide a general summary or topic extraction.  
+
+**Method:**  
+Use `process_text_data` (LLM-based) in `app/log_metrics_analysis.py`.  
+
+**Result Stored:**  
+Dictionary with summary.  
+Example: `{"summary": "..."}`  
+
+---
+
+#### **DataType.UNKNOWN**  
+**Input Examples:**  
+Binary files (if not parsed), unclassifiable text.  
+
+**Processing Goal:**  
+None.  
+
+**Method:**  
+No processing function called by `/data` endpoint.  
+
+**Result Stored:**  
+None or maybe `{"error": "Cannot process unknown data type"}`  
+
+---
+
+### Summary & Next Steps
+
+This refined list of `DataType` values seems appropriate for routing data to different processing methods. The names are clearer (`PROBLEM_STATEMENT`, `SYSTEM_LOGS`, etc.) and we've added `SOURCE_CODE`.
+
+**Next Steps:**
+1. Update the `DataType` Enum in `app/models.py`.  
+2. Update the classifier (`app/data_classifier.py`) to recognize and output these types.  
+3. Ensure the `/data` endpoint in `app/query_processing.py` has the corresponding `elif classified_type == DataType.X:` blocks to call the correct processing function (implementing placeholders like `process_source_code` as needed).
+
+
+
+## Data processing by Faultmaven
+
+FaultMaven will deliver accurate, on-demand problem diagnosis while evolving over time to offer rich, knowledge-backed solutions—adapting to both immediate needs and long-term troubleshooting guidance. The dynamic problem diagnosis feature will be the primary offering at launch, while the knowledge base will be added later as the platform gains traction. Both features involve intensive data processing, but there are fundamental differences between them.
+
+### 1. Real-Time Problem Diagnosis (Dynamic Data Processing)
+
+- **Data Source & Timing:**  
+  Data is submitted directly from the frontend. Examples include logs, error messages, or detailed descriptions that users provide during troubleshooting.
+  
+- **Purpose & Workflow:**  
+  The system processes this unstructured data on the fly to extract critical details that inform the problem context. This enriched, dynamic input is then passed to the LLM, which interprets it to diagnose the issue in near real time.
+  
+- **LLM Role:**  
+  The LLM acts on the enriched query by analyzing the immediate problem scenario, thereby generating rapid and actionable insights.
+  
+- **Impact:**  
+  Enables quick, on-demand diagnosis essential for resolving immediate troubleshooting issues.
+
+### 2. Knowledge-Backed Solutions (Preprocessed Knowledge Base)
+
+- **Data Source & Timing:**  
+  Data is collected from backend sources, processed, and curated in advance. The preprocessed set includes documented procedures, guidelines, and other relevant knowledge assets.
+  
+- **Purpose & Workflow:**  
+  This pre-curated data forms a structured knowledge database. When a troubleshooting query is made, the system retrieves the relevant curated context and the LLM uses it to assemble a comprehensive, knowledge-backed solution.
+  
+- **LLM Role:**  
+  The LLM synthesizes the retrieved, validated data to construct a coherent and informed answer that aligns with established guidelines.
+  
+- **Impact:**  
+  Provides solutions that are not only accurate but also grounded in a repository of validated information, supporting long-term troubleshooting strategies.
+
+### Comparative Analysis
+
+- **Timing of Data Processing:**  
+  - **Dynamic Diagnosis:** Data is processed in real time as it becomes available from the user.
+  - **Knowledge Base Solutions:** Data is processed in advance, indexed, and stored for efficient retrieval when needed.
+
+- **Role of Data in the Query:**  
+  - **Dynamic Scenario:** The data is an integral part of the question, requiring the LLM to interpret and diagnose issues from raw, unstructured inputs.
+  - **Preprocessed Scenario:** The data forms the foundation of the answer, guiding the LLM to synthesize a response using established knowledge.
+
+- **System Design Implications:**  
+  - **Real-Time Problem Diagnosis:** Demands robust real-time parsing, extraction, and summarization mechanisms to handle on-the-fly data.
+  - **Knowledge-Backed Solutions:** Relies on backend preprocessing, indexing, and retrieval strategies to ensure the quality and consistency of the knowledge base.
+
+### Implementation Differences
+
+- **Timing:**  
+  - *On-Demand:* Data for real-time problem diagnosis is processed immediately as it is submitted.  
+  - *Pre-Built:* Data for the knowledge-based solution is preprocessed and compiled in advance.
+
+- **Storage Period:**  
+  - *Short-Term & Transient:* For dynamic inputs, data is temporarily cached to support immediate analysis and then discarded.  
+  - *Long-Term & Persistent:* For the knowledge base, data is stored persistently in a database to support ongoing troubleshooting efforts.
+
+- **Storage Media:**  
+  - *Cache:* Used to hold dynamic, real-time data for quick access during immediate problem diagnosis.  
+  - *Database:* Utilized for storing preprocessed, curated information that forms the foundation for long-term solutions.
+
+- **Processing Tools:**  
+  - *Specialized Tools:* For dynamic data, various processing tools (e.g., log processing tools, real-time stream analyzers) handle unstructured inputs.  
+  - *Batch & Popular Tools:* For the knowledge base, standard batch-processing tools and data pipelines are employed to index and process large volumes of structured documents.
+
+- **Data Sourcing:**  
+  - *Frontend:* Dynamic data is sourced directly from user inputs, such as file uploads or form submissions.  
+  - *Backend:* Preprocessed data is acquired from external sources via URLs or direct file uploads through backend systems.
+
+- **Data Uploading:**  
+  - *Single Submission:* Real-time diagnosis typically involves uploading a single page or file to be processed immediately.  
+  - *Batch Job:* The knowledge base is built through batch jobs that process multiple files or data streams over time.
+
+
+### Conclusion
+
+FaultMaven’s dual approach is designed to balance agility with precision. Initially, the focus will be on dynamic, real-time problem diagnosis—leveraging live data processing to quickly interpret and resolve issues. Over time, as FaultMaven gains traction, it will evolve to incorporate a comprehensive, preprocessed knowledge base that supports the formulation of rich, informed solutions. Although both features rely on sophisticated data processing, they differ fundamentally in when data is processed, how it is used by the LLM, and the overall design strategy they require.

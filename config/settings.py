@@ -1,98 +1,129 @@
 # config/settings.py
-from pydantic import Field
+from pydantic import Field, HttpUrl, field_validator, ValidationInfo
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing import Optional, Dict, Any
+from typing import Optional
 
 class Settings(BaseSettings):
-    # LLM Provider Selection - Default to Hugging Face for now
-    llm_provider: str = Field("huggingface", env="LLM_PROVIDER")
+    """
+    Holds all application configuration settings, loaded from environment
+    variables and/or a .env file.
+    """
 
-    # OpenAI API Configuration (Optional, if you use OpenAI)
-    openai_api_key: Optional[str] = Field(None, env="OPENAI_API_KEY")
-    openai_model: Optional[str] = Field("gpt-4o", env="OPENAI_MODEL")
+    # --- LLM Provider Selection ---
+    chat_provider: str = Field("phi3_onnx_local", validation_alias="CHAT_PROVIDER", description="Provider for main chat LLM ('openai', 'ollama', 'phi3_onnx_local', 'huggingface', etc.)")
+    classifier_provider: str = Field("huggingface", validation_alias="CLASSIFIER_PROVIDER", description="Provider for classification LLM ('openai', 'huggingface', etc.)")
 
-    # Hugging Face API Configuration
-    huggingface_api_key: Optional[str] = Field(None, env="HUGGINGFACE_API_KEY")
-    huggingface_model: str = Field("mistralai/Mixtral-8x7B-Instruct-v0.1", env="HUGGINGFACE_MODEL") # Using a better model.
-    huggingface_api_url: str = Field("https://api-inference.huggingface.co/models", env="HUGGINGFACE_API_URL")
+    # --- Provider Specific Settings ---
 
-    # Anthropic (Claude) API Configuration  (Optional)
-    anthropic_api_key: Optional[str] = Field(None, env="ANTHROPIC_API_KEY")
-    anthropic_model: Optional[str] = Field("claude-3-opus", env="ANTHROPIC_MODEL")
-    anthropic_api_url: Optional[str] = Field(None, env="ANTHROPIC_API_URL")
+    # OpenAI
+    openai_api_key: Optional[str] = Field(None, validation_alias="OPENAI_API_KEY", description="API Key for OpenAI services.")
+    openai_model: str = Field("gpt-4o", validation_alias="OPENAI_MODEL", description="Default OpenAI model for chat/tasks.")
+    classifier_model: Optional[str] = Field(None, validation_alias="CLASSIFIER_MODEL", description="Specific OpenAI model for classification (if provider is openai).")
 
-    # Mistral AI Configuration (Optional)
-    mistral_api_key: Optional[str] = Field(None, env="MISTRAL_API_KEY")
-    mistral_model: str = Field("mistral-large", env="MISTRAL_MODEL")
-    mistral_api_url: Optional[str] = Field(None, env="MISTRAL_API_URL")
+    # Hugging Face
+    huggingface_api_key: Optional[str] = Field(None, validation_alias="HUGGINGFACE_API_KEY", description="API Token for Hugging Face Hub/Endpoints.")
+    huggingface_model: Optional[str] = Field("tiiuae/falcon-7b-instruct", validation_alias="HUGGINGFACE_MODEL", description="Default Hugging Face model/repo_id.")
 
-    # DeepSeek AI Configuration (Optional)
-    deepseek_api_key: Optional[str] = Field(None, env="DEEPSEEK_API_KEY")
-    deepseek_model: str = Field("deepseek-chat", env="DEEPSEEK_MODEL")
-    deepseek_api_url: Optional[str] = Field(None, env="DEEPSEEK_API_URL")
+    # Local LLM
+    local_llm_url: Optional[HttpUrl] = Field(None, validation_alias="LOCAL_LLM_URL", description="Base URL for local LLM server (Ollama, OpenAI-compatible, Phi3 custom server).")
+    local_llm_model: Optional[str] = Field(None, validation_alias="LOCAL_LLM_MODEL", description="Model name required by some local providers (e.g., Ollama).")
 
-    # OpenRouter API Configuration (Optional - Supports various models)
-    openrouter_api_key: Optional[str] = Field(None, env="OPENROUTER_API_KEY")
-    openrouter_model: str = Field("openrouter-default", env="OPENROUTER_MODEL")
-    openrouter_api_url: Optional[str] = Field(None, env="OPENROUTER_API_URL")
+    # --- External Service Keys/URLs ---
+    mcp_server_url: Optional[HttpUrl] = Field(None, validation_alias="MCP_SERVER_URL", description="URL of the external MCP processing server.")
+    # --- ADD TAVILY API KEY ---
+    tavily_api_key: Optional[str] = Field(None, validation_alias="TAVILY_API_KEY", description="API Key for Tavily Search service (for WebSearchTool).")
+    # --- END ADDITION ---
 
-    # IBM Granite AI Configuration (Optional)
-    ibm_granite_api_key: Optional[str] = Field(None, env="IBM_GRANITE_API_KEY")
-    ibm_granite_model: str = Field("granite-13b-instruct", env="IBM_GRANITE_MODEL")
-    ibm_granite_api_url: Optional[str] = Field(None, env="IBM_GRANITE_API_URL")
+    # --- Application Behavior Settings ---
+    error_rate_anomaly_threshold_factor: float = Field(2.0, description="Factor for error rate anomaly detection.")
+    min_data_points_for_anomaly_detection: int = Field(3, description="Min data points needed for std dev based anomaly detection.")
+    metric_anomaly_threshold_std_dev: float = Field(2.0, description="Number of standard deviations for metric anomaly threshold.")
+    SESSION_TIMEOUT: int = Field(1800, validation_alias="SESSION_TIMEOUT", description="Session inactivity timeout in seconds.")
+    VECTOR_TIMEOUT: int = Field(60, validation_alias="VECTOR_TIMEOUT", description="Timeout in seconds for the external 'vector' tool subprocess.")
 
-    # Log summary prompt (Corrected)
-    log_summary_prompt: str = (
-        "Summarize the following log data concisely, focusing on key observations, trends, anomalies, and potential issues. "
-        "Limit the summary to 150 words.\n\n"
-        "**Log Data:**\n{log_data}\n\n"
-        "**Key Insights:**"  # Clear output marker
+    # --- NEW: Agent Settings ---
+    AGENT_VERBOSE: bool = Field(False, validation_alias="AGENT_VERBOSE", description="Enable verbose logging for the agent executor.")
+    AGENT_MAX_ITERATIONS: int = Field(10, validation_alias="AGENT_MAX_ITERATIONS", description="Maximum iterations for the agent loop.")
+    # --- END NEW SETTINGS ---
+
+
+    # --- Settings Model Configuration ---
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore"
     )
 
-    # General query prompt (Corrected)
-    general_query_prompt: str = (
-        "You are FaultMaven, a highly skilled SRE and DevOps expert. "
-        "Provide a concise and informative answer to the following question. "
-        "Assume the user is a technical professional. "
-        "Use bullet points or numbered lists if applicable. Keep responses under 200 words.\n\n"
-        "**Conversation History:**\n"
-        "{context}\n\n"
-        "**User:** {query}\n\n" # User:
-        "**Assistant:**"  # Assistant:
-    )
-    # Troubleshooting prompt (Corrected)
-    troubleshooting_prompt: str = (
-        "You are FaultMaven, an expert troubleshooting assistant specializing in Site Reliability Engineering (SRE) and DevOps. "
-        "Analyze the provided system data and user question to determine the MOST LIKELY root cause. "
-        "Provide concise, actionable next steps ONLY when supported by the data and directly relevant to the user's question. "
-        "Your response MUST be valid JSON. Invalid JSON is not acceptable.\n\n"
-        "**Conversation History:**\n"
-        "{context}\n\n"
-        "**User:** {user_query}\n\n"
-        "**System Data Summary:**\n{data_summary}\n\n"
-    )
+    # --- Validators ---
+    # (Existing validators remain unchanged)
+    @field_validator('openai_api_key', mode='before')
+    @classmethod
+    def check_openai_key(cls, v: Optional[str], info: ValidationInfo) -> Optional[str]:
+        values = info.data
+        # Check if either provider uses openai
+        if values.get('chat_provider') == 'openai' or values.get('classifier_provider') == 'openai':
+             if not v:
+                  raise ValueError("OPENAI_API_KEY environment variable must be set when using 'openai' provider.")
+        return v
 
+    @field_validator('huggingface_api_key', mode='before')
+    @classmethod
+    def check_hf_key(cls, v: Optional[str], info: ValidationInfo) -> Optional[str]:
+        values = info.data
+        # Check if either provider uses huggingface
+        if values.get('chat_provider') == 'huggingface' or values.get('classifier_provider') == 'huggingface':
+             if not v:
+                  raise ValueError("HUGGINGFACE_API_KEY environment variable must be set when using 'huggingface' provider.")
+        return v
 
-    # Data classification prompt
-    data_classification_prompt: str = (
-        "Classify the following data into ONE of these categories: log, metric, config, text, or unknown.\n"
-        "Return ONLY the category name. Do NOT return anything else.\n\n"
-        "Data:\n`\n{data}\n`\n\n"
-        "Category:"
-    )
-    # Prompt for text analysis
-    text_analysis_prompt: str = (
-        "Summarize and analyze the following text. Identify any key topics, entities, or potential issues. "
-        "If the text appears to be related to a technical problem, suggest possible causes or troubleshooting steps.\n\n"
-        f"Text:\n`\n{{data}}\n`"
-    )
+    @field_validator('huggingface_model', mode='before')
+    @classmethod
+    def check_hf_model(cls, v: Optional[str], info: ValidationInfo) -> Optional[str]:
+        values = info.data
+         # Check if either provider uses huggingface
+        if values.get('chat_provider') == 'huggingface' or values.get('classifier_provider') == 'huggingface':
+             if not v:
+                  raise ValueError("HUGGINGFACE_MODEL environment variable must be set when using 'huggingface' provider.")
+        return v
 
-    error_rate_anomaly_threshold_factor: float = 2.0
-    min_data_points_for_anomaly_detection: int = 3
-    metric_anomaly_threshold_std_dev: float = 2.0
-    SESSION_TIMEOUT: int = 1800
-    VECTOR_TIMEOUT: int = 60
+    @field_validator('local_llm_url', mode='before')
+    @classmethod
+    def check_local_url(cls, v: Optional[HttpUrl], info: ValidationInfo) -> Optional[HttpUrl]:
+        values = info.data
+        local_providers = ['ollama', 'openai_compatible_local', 'phi3_onnx_local']
+        # Check if either provider is one of the local types
+        is_local_chat = values.get('chat_provider') in local_providers
+        is_local_classifier = values.get('classifier_provider') in local_providers
+        if (is_local_chat or is_local_classifier) and not v:
+            raise ValueError("LOCAL_LLM_URL environment variable must be set when using a local provider.")
+        return v
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra='ignore')
+    @field_validator('local_llm_model', mode='before')
+    @classmethod
+    def check_local_model(cls, v: Optional[str], info: ValidationInfo) -> Optional[str]:
+        values = info.data
+         # Check if either provider uses ollama
+        if values.get('chat_provider') == 'ollama' or values.get('classifier_provider') == 'ollama':
+            if not v:
+                raise ValueError("LOCAL_LLM_MODEL environment variable must be set when using 'ollama' provider.")
+        return v
 
+    @field_validator('mcp_server_url', mode='before')
+    @classmethod
+    def check_mcp_url(cls, v: Optional[HttpUrl], info: ValidationInfo) -> Optional[HttpUrl]:
+        # No specific validation needed currently
+        return v
+
+    # No validator added for tavily_api_key as the tool handles its absence gracefully (placeholder mode)
+
+# --- Instantiate settings once for application-wide use ---
 settings = Settings()
+
+# --- Optional: Log loaded settings on startup (example) ---
+# from app.logger import logger # Make sure logger is available if you do this
+# logger.info(f"Loaded settings: Chat Provider={settings.chat_provider}, Classifier Provider={settings.classifier_provider}")
+# logger.info(f"Agent Settings: Verbose={settings.AGENT_VERBOSE}, Max Iterations={settings.AGENT_MAX_ITERATIONS}")
+# if settings.tavily_api_key:
+#     logger.info("Tavily API Key: Loaded")
+# else:
+#      logger.warning("Tavily API Key: Not Found (WebSearchTool may be limited)")

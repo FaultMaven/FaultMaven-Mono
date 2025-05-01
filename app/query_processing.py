@@ -1,278 +1,376 @@
-"""
-query_processing.py - Query Processing & API Server
+# app/query_processing.py
 
-Handles API requests, session management, data processing, and routing
-to appropriate backend modules.
-"""
-
-from fastapi import FastAPI, Body, HTTPException, Depends, Header, UploadFile, File, Form, Response
-from fastapi.responses import JSONResponse, HTMLResponse
-from pydantic import BaseModel, Field, field_validator, constr
-from typing import Optional, Dict, Any, List
-from app.logger import logger
-from app.log_metrics_analysis import process_logs_data, LogInsights, process_data
-from app.ai_troubleshooting import process_query, process_query_with_logs
-from app.continuous_learning import update_session_learning  # Assuming this exists
-from app.llm_provider import LLMProvider, LLMParsingError  # Keep for potential error handling
+import time
+import uuid
+import json
+import asyncio # Ensure asyncio is imported
+from fastapi import (
+    FastAPI, Body, HTTPException, Header, UploadFile, File, Form, Response
+)
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from typing import Optional, Dict, List, Any, Union
+
+from app.logger import logger
 from config.settings import settings
-import re
-import uuid
-import time
-import aiohttp
-from bs4 import BeautifulSoup
-from app.session_management import get_session_data, create_session, save_session_data
-from app.data_classifier import classify_data, DataType  # Import data classifier
 
-# Constants for input validation
-MAX_QUERY_LENGTH = 10000
-MAX_FEEDBACK_LENGTH = 2000
-QUERY_REGEX = r"^[a-zA-Z0-9\s.,;:'\"?!-]+$"
-MAX_HISTORY_LENGTH = 20  # Maximum conversation turns to store
-
-# --- Pydantic Models ---
-
-class QueryRequest(BaseModel):
-    """Defines the structure for incoming query requests (query-only)."""
-    query: str = Field(..., description="User's troubleshooting query.")  # Query is now required.
-
-    @field_validator("query")
-    def check_query(cls, v):
-        if not re.match(QUERY_REGEX, v):
-            raise ValueError("Query contains invalid characters.")
-        if not 1 <= len(v) <= MAX_QUERY_LENGTH:  # Enforce length constraints
-            raise ValueError("Query length is out of bounds")
-        return v
-
-class QueryResponse(BaseModel):
-    """Defines the structure for API query responses."""
-    response: str
-    type: str  # "query-only", "data-summary", "combined", "empty", "error"
-    data: Optional[Dict[str, Any]] = None
-    message: Optional[str] = None # Add a message field
-
-class DataResponse(BaseModel):
-    """Defines the structure for data upload responses."""
-    summary: str
-    type: str # "data-summary"
-    data: Optional[Dict[str, Any]] = None
-    message: Optional[str] = None # Add a message field
-
-
-class FeedbackRequest(BaseModel):
-    """Defines the structure for user feedback submissions."""
-    query: str = Field(..., description="The query associated with the feedback.")
-
-    @field_validator("query")
-    def validate_query(cls, v):
-        v = v.strip()
-        if not (1 <= len(v) <= MAX_FEEDBACK_LENGTH):
-            raise ValueError("Query length is out of bounds.")
-        return v
-    feedback: constr(strip_whitespace=True, min_length=1, max_length=MAX_FEEDBACK_LENGTH) = Field(..., description="User feedback on the query response.")
-
-
-
-# --- FastAPI App Setup ---
-
-app = FastAPI()
-
-# Enable CORS (Cross-Origin Resource Sharing)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins (for development; restrict in production)
-    allow_credentials=True,
-    allow_methods=["*"],  # Allows all methods
-    allow_headers=["*"],  # Allows all headers
+# --- Import Centralized Models ---
+from app.models import (
+    QueryRequest,
+    FeedbackRequest,
+    TroubleshootingResponse,
+    DataInsightsResponse,
+    UploadedData,
+    DataType,
+    LogInsights,
+    BrowserContextData
 )
 
-app.mount("/static", StaticFiles(directory="frontend", html=True), name="frontend") # To serve frontend files
+# --- Import Session Management & Data Classifier ---
+from app.session_management import (
+    get_or_create_session,
+    get_memory_for_session,
+    get_data_for_session,
+    add_data_to_session,
+)
+from app.data_classifier import classify_data
 
-# --- Dependency for Session Management ---
-def get_sessions() -> Dict[str, Dict[str, Any]]:
-    """Dependency function to provide the sessions dictionary."""
-    if not hasattr(get_sessions, "sessions"):
-        get_sessions.sessions: Dict[str, Dict[str, Any]] = {}  # Initialize if it doesn't exist
-    return get_sessions.sessions
+# --- Import Data Processors ---
+from app.log_metrics_analysis import (
+    process_logs_data,
+    process_text_data,
+    process_metrics_data,
+    process_config_data,
+)
+from app.code_analyzer import process_source_code
 
-def get_llm_provider():
-    """Dependency function to provide an instance of LLMProvider."""
-    return LLMProvider()
+# --- Agent/Tool Imports ---
+from app.tools import tools_list
+from app.llm_provider import llm
+from langchain.agents import AgentExecutor, create_openai_tools_agent
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+
+# --- FastAPI App Setup ---
+app = FastAPI(
+    title="FaultMaven API",
+    description="API for the AI-powered troubleshooting assistant FaultMaven.",
+    version="0.2.0"
+)
+
+# --- CORS Middleware ---
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], # TODO: Restrict in production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# --- Static Files Mount ---
+try:
+    app.mount("/static", StaticFiles(directory="frontend", html=True), name="frontend")
+    logger.info("Mounted static frontend directory at /static.")
+except RuntimeError:
+    logger.warning("Frontend directory not found at project root. Skipping static file mount.")
+except Exception as e:
+     logger.error(f"Error mounting static directory: {e}")
+
+
+# === AGENT SETUP ===
+agent_prompt = ChatPromptTemplate.from_messages([
+    ("system", (
+        "You are FaultMaven, an expert SRE assistant. Your goal is to help users troubleshoot issues "
+        "by intelligently using the available tools based on their query, the conversation history, and the current session_id ({session_id}). "
+        "Think step-by-step. Analyze the query to determine the best tool(s). "
+        "Prioritize internal tools (LogSearch, MetricQuery, KnowledgeBaseSearch, ConfigLookup, IncidentHistory) "
+        "for system-specific information. Use WebSearchTool ONLY for recent external information, public service statuses, CVEs, or general knowledge. "
+        "Use GeneralChatTool as a fallback for summarization or general conversation based *only* on existing context (history and uploaded data summaries). "
+        "Provide concise and accurate answers based on tool outputs."
+    )),
+    MessagesPlaceholder(variable_name="chat_history", optional=True),
+    ("human", "{input}"), # User query
+    MessagesPlaceholder(variable_name="agent_scratchpad"), # Agent working memory
+])
+
+agent_executor = None # Initialize as None
+try:
+    # Ensure the LLM supports the chosen agent type (e.g., OpenAI models for OpenAI Tools agent)
+    agent = create_openai_tools_agent(llm, tools_list, agent_prompt)
+    agent_executor = AgentExecutor(
+        agent=agent,
+        tools=tools_list,
+        verbose=settings.AGENT_VERBOSE, # Control verbosity via settings
+        handle_parsing_errors=True, # More robust parsing
+        max_iterations=settings.AGENT_MAX_ITERATIONS, # Limit loops via settings
+    )
+    logger.info("Agent Executor created successfully.")
+except Exception as e:
+     logger.error(f"Failed to create agent executor on startup: {e}", exc_info=True)
+     # agent_executor remains None, handle this in the endpoint
+# === END AGENT SETUP ===
+
 
 # --- API Endpoints ---
 
-@app.post("/data", response_model=DataResponse)
+@app.post(
+    "/data",
+    response_model=DataInsightsResponse,
+    summary="Upload, Process Data, and Get Contextual Insights",
+    description="Uploads data (text, file, or browser context), classifies it, "
+                "triggers specialized processing using conversation history context "
+                "(if available), stores results, and returns initial insights "
+                "with a prompt for next steps."
+)
+# --- COMPLETE and CORRECT /data Signature ---
 async def handle_data(
-    response: Response,
-    x_session_id: Optional[str] = Header(None),
-    llm_provider: LLMProvider = Depends(get_llm_provider),
-    sessions: Dict[str, Dict[str, Any]] = Depends(get_sessions),  # Inject sessions!
-    file: Optional[UploadFile] = File(None),  # For file uploads
-    text: Optional[str] = Form(None),  # For text input as form data
-) -> JSONResponse:
-    """Handles data upload (text, file, or URL)."""
+    response: Response, # Used to set the session ID header
+    x_session_id: Optional[str] = Header(None, description="Existing session ID, if available."),
+    file: Optional[UploadFile] = File(None, description="File containing data (e.g., logs, config)."),
+    text: Optional[str] = Form(None, description="Raw text data pasted by user."),
+    context: Optional[BrowserContextData] = Body(None, description="Structured data captured from browser context.")
+) -> DataInsightsResponse:
+    """
+    Handles data submission with context-aware processing.
+    """
+    # (Implementation of /data remains the same as the fully correct version)
+    start_time = time.time()
+    logger.info(f"Received /data request. Provided Session ID: {x_session_id}")
+    session_id = get_or_create_session(x_session_id)
+    response.headers["X-Session-ID"] = session_id
+    logger.info(f"Using Session ID: {session_id}")
+    session_memory = get_memory_for_session(session_id)
+    history_messages = session_memory.chat_memory.messages if session_memory else []
+    logger.debug(f"Retrieved {len(history_messages)} history messages for context.")
 
-    session_id = x_session_id or create_session(sessions) # Pass sessions
-    session = get_session_data(session_id, sessions) # Pass sessions
+    original_type: str = ""
+    data_content: str = ""
+    filename: Optional[str] = None
+    source_description: str = "Unknown"
 
-    if x_session_id and not session:  # Session ID provided but invalid
-        response.status_code = 400  # Bad Request
-        return JSONResponse(content=DataResponse(summary="", type="error", message="Session expired or invalid. Please start a new conversation.").dict(), headers={"X-Session-ID": session_id})
-
-
-    if not session: #Create if session is not valid
-        session = sessions[session_id] = {"history": [], "data": [], "last_activity": time.time()}
-
-    headers = {"X-Session-ID": session_id}
-
-    # --- Data Type Mapping (User-Friendly) ---
-    data_type_mapping = {
-        DataType.SYSTEM_LOGS: "logs",
-        DataType.MONITORING_METRICS: "metrics",
-        DataType.CONFIGURATION_DATA: "configuration data",
-        DataType.ROOT_CAUSE_ANALYSIS: "root cause analysis data",
-        DataType.TEXT: "text",
-        DataType.UNKNOWN: "unknown data type",
-    }
+    # 2. Determine Input Source and Extract Content
+    input_sources_provided = sum(1 for item in [file, text, context] if item is not None)
+    if input_sources_provided == 0:
+         raise HTTPException(status_code=400, detail="No data provided. Please submit file, text, or context.")
+    if input_sources_provided > 1:
+         raise HTTPException(status_code=400, detail="Ambiguous input. Please provide only one of: file, text, or context.")
 
     try:
-        if file:
-            data_type = "file"
-            logger.debug(f"File received: {file.filename}")
-            contents = await file.read()  # Read file contents as bytes
+        if context:
+            original_type = "browser_context"
+            data_content = context.selected_text or context.page_content_snippet or json.dumps(context.model_dump())
+            source_description = f"Context from URL: {context.url or 'Unknown'}"
+        elif file:
+            original_type = "file"
+            filename = file.filename
+            source_description = f"Filename: {filename or 'Unknown'}"
+            contents = await file.read()
             try:
-                data_content = contents.decode("utf-8")  # Decode as UTF-8
+                data_content = contents.decode("utf-8")
             except UnicodeDecodeError:
-                await file.close() #Close it before throw exception
-                raise HTTPException(status_code=400, detail="Invalid file encoding.  Must be UTF-8.")
+                raise HTTPException(status_code=400, detail="Invalid file encoding. Only UTF-8 text parseable currently.")
             finally:
                 await file.close()
         elif text:
-            data_type = "text"
+            original_type = "text"
+            source_description = "Pasted Text"
             data_content = text
-            logger.debug(f"Text data received: {data_content[:100]}...") # Log a snippet of the content
-        else:
-            # Should never happen because of Pydantic validation, but good practice
-            logger.error("No data provided in request.")
-            raise HTTPException(status_code=400, detail="No data provided.")
 
-        logger.debug(f"Data type: {data_type}, Data content length: {len(data_content)}") # Log data type and content length
+        if not data_content.strip():
+             raise HTTPException(status_code=400, detail="Data content is empty after extraction.")
 
-        # --- CLASSIFY THE DATA ---
-        data_classification = classify_data(data_content, llm_provider)
-        logger.info(f"Data classified as: {data_classification.data_type}")
+    except HTTPException as http_exc:
+        raise http_exc
+    except Exception as e:
+        logger.exception(f"Error reading/preparing data for session {session_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Error reading submitted data: {e}")
 
-        # --- Store the RAW data and the CLASSIFICATION ---
-        session["data"].append(
-            {
-                "type": data_type,   # Store the *original* type (text/file)
-                "content": data_content,
-                "summary": None,    # No summary yet at this point
-                'llm_summary': "",   # No LLM summary yet
-                "data_type": data_classification.data_type,  # Store the *classified* type.
-                "timestamp": time.time()
-            }
-        )
-        session["last_activity"] = time.time()
+    # 3. Classify Data
+    try:
+        classification_result = await classify_data(data_content)
+        classified_type = classification_result.data_type
+    except Exception as e:
+        logger.exception(f"Error during data classification for session {session_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to classify data: {e}")
 
-        # --- Construct the prompting message (USER-FRIENDLY) ---
-        # Get user-friendly type.  Use .get() with default for safety.
-        display_type = data_type_mapping.get(data_classification.data_type, "data")
-        message = (
-            f"Data received ({display_type}).  What would you like me to do with it? (e.g., summarize, analyze, troubleshoot)"
-        )
-        response_data = DataResponse(summary="", type="data-received", message=message, data=None) #No summary
-        return JSONResponse(content=response_data.dict(), headers=headers) #Return result
+    # 4. Process Data (Context-Aware) & Prepare Results
+    content_snippet = data_content[:1500]
+    uploaded_data_entry = UploadedData(
+        original_type=original_type,
+        content_snippet=content_snippet,
+        classified_type=classified_type,
+        filename=filename,
+        processing_status="Processing"
+    )
+    processed_results_payload: Optional[Union[LogInsights, Dict[str, Any], str]] = None
+    user_message = ""
+    clarification_prompt = "What would you like to do with this data next?"
 
-    except ValueError as e:
-        logger.error(f"Data Processing Error: {e}", exc_info=True)
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:   #pylint: disable=broad-exception-caught
-        logger.exception(f"An unexpected error occurred: {e}")
-        raise HTTPException(status_code=500, detail="An unexpected error occurred.")
+    try:
+        # Route to specific processor, passing data content AND history_messages
+        if classified_type == DataType.SYSTEM_LOGS:
+            insights = await process_logs_data(data_content, history=history_messages)
+            processed_results_payload = insights
+            clarification_prompt = "Log analysis complete. Ask about specific errors, anomalies, or time ranges?"
+        elif classified_type == DataType.ISSUE_DESCRIPTION:
+            analysis_dict = await process_text_data(data_content, history=history_messages)
+            processed_results_payload = analysis_dict
+            clarification_prompt = "Problem statement summarized. Upload relevant logs or metrics?"
+        elif classified_type == DataType.GENERIC_TEXT:
+            analysis_dict = await process_text_data(data_content, history=history_messages)
+            processed_results_payload = analysis_dict
+            clarification_prompt = "Text analysis complete. What specific questions do you have?"
+        elif classified_type == DataType.MONITORING_METRICS:
+            metrics_dict = await asyncio.to_thread(process_metrics_data, data_content, history=history_messages)
+            processed_results_payload = metrics_dict
+            clarification_prompt = "Metrics processed (placeholder). Ask about trends or correlations?"
+        elif classified_type == DataType.CONFIGURATION_DATA:
+            config_dict = await asyncio.to_thread(process_config_data, data_content, history=history_messages)
+            processed_results_payload = config_dict
+            clarification_prompt = "Config processed (placeholder). Ask about specific parameters?"
+        elif classified_type == DataType.SOURCE_CODE:
+            code_dict = await process_source_code(data_content, history=history_messages)
+            processed_results_payload = code_dict
+            clarification_prompt = "Code processed (placeholder analysis). Ask about functions or structure?"
+        else: # UNKNOWN
+            uploaded_data_entry.processing_status = "NoProcessingNeeded"
+            processed_results_payload = f"Data classified as {classified_type.value}. No specific analysis applied."
+            clarification_prompt = "What would you like to ask about this data?"
+
+        if uploaded_data_entry.processing_status == "Processing":
+            uploaded_data_entry.processed_results = processed_results_payload
+            uploaded_data_entry.processing_status = "Processed"
+            user_message = f"Successfully processed {original_type} data ({filename or source_description}). Insights provided."
+
+    except Exception as processing_exc:
+        logger.error(f"Processing failed for type {classified_type.value} (session {session_id}): {processing_exc}", exc_info=True)
+        uploaded_data_entry.processing_status = "Failed"
+        error_message = f"Processing failed: {processing_exc}"
+        uploaded_data_entry.processed_results = {"error": error_message}
+        processed_results_payload = {"error": error_message}
+        user_message = f"Received {original_type} data (classified as {classified_type.value}), but processing failed."
+        clarification_prompt = "Processing failed. Try different data or ask a general question?"
+
+    # 5. Store Results in Session
+    try:
+        add_data_to_session(session_id, uploaded_data_entry)
+    except Exception as e:
+        logger.exception(f"CRITICAL: Failed to store processed data in session {session_id}: {e}")
+        raise HTTPException(status_code=500, detail="Data processed but failed to save session state.")
+
+    # 6. Return Insights Response
+    if not user_message:
+        if uploaded_data_entry.processing_status == "Failed":
+             user_message = (
+                 f"Data submission processed, but analysis failed for "
+                 f"{filename or original_type}."
+             )
+        elif uploaded_data_entry.processing_status == "NoProcessingNeeded":
+             user_message = (
+                 f"Received {original_type} data ({filename or source_description}). "
+                 f"Ready for questions."
+             )
+        else:  # Processed
+             user_message = (
+                 f"Successfully processed {original_type} data "
+                 f"({filename or source_description}). Insights provided."
+             )
+
+    processing_duration = time.time() - start_time
+    logger.info(f"Completed /data request for session {session_id} in {processing_duration:.2f}s")
+
+    return DataInsightsResponse(
+        message=user_message,
+        classified_type=classified_type.value,
+        session_id=session_id,
+        insights=processed_results_payload,
+        next_prompt=clarification_prompt
+    )
 
 
-@app.post("/query", response_class=HTMLResponse)
+# --- /query Endpoint (Agentic version) ---
+@app.post(
+    "/query",
+    response_model=TroubleshootingResponse,
+    summary="Ask Troubleshooting Question (Agentic)", # Updated summary
+    description="Processes a user query by intelligently routing it to appropriate tools (logs, metrics, KB, web search, etc.) or answering based on context." # Updated description
+)
+# --- COMPLETE and CORRECT /query Signature ---
 async def handle_query(
-    response: Response,
-    request: QueryRequest = Body(...),
-    x_session_id: Optional[str] = Header(None),
-    llm_provider: LLMProvider = Depends(get_llm_provider),
-    sessions: Dict[str, Dict[str, Any]] = Depends(get_sessions)  # Inject sessions!
-) -> str: #Return HTML string
-    """Handles user queries, with session management, returns HTML response."""
-    logger.info(f"Received request: {request.dict()}")
+    response: Response, # To set session ID header
+    request: QueryRequest, # Contains the user's query string
+    x_session_id: Optional[str] = Header(None, description="Session ID for the conversation context."),
+) -> TroubleshootingResponse:
+# --- END CORRECTION ---
+    """
+    Handles user queries using an agent to determine the best way to answer,
+    potentially using tools to interact with various data sources.
+    """
+    # (Implementation of /query remains the same agentic version)
+    start_time = time.time()
+    logger.info(f"Received agentic /query request. Provided Session ID: {x_session_id}")
+    session_id = get_or_create_session(x_session_id)
+    response.headers["X-Session-ID"] = session_id
+    logger.info(f"Using Session ID: {session_id}")
 
-    session_id = x_session_id or create_session(sessions) #Pass sessions
-    session = get_session_data(session_id, sessions) #Pass sessions
-    headers = {"X-Session-ID": session_id}
+    if agent_executor is None:
+         logger.error("Agent Executor is not initialized. Cannot process query.")
+         raise HTTPException(status_code=500, detail="Agent subsystem is not available.")
 
-    if x_session_id and not session:  # Session ID provided but invalid
-        response.status_code = 400  # Bad Request
-        # --- CORRECTLY RETURN HTML FOR ERRORS ---
-        return  f"<div class='conversation-item error-response'><p><strong>Error:</strong> Session expired or invalid. Please start a new conversation.</p></div>" # Return formatted HTML
+    session_memory = get_memory_for_session(session_id)
+    if session_memory is None:
+        logger.error(f"Session {session_id} memory invalid or missing after get_or_create_session.")
+        raise HTTPException(
+            status_code=400,
+            detail="Session expired or invalid. Please upload data or start a new conversation."
+        )
 
-    if not session: #Create if session is not valid
-        session = sessions[session_id] = {"history": [], "data": [], "last_activity": time.time()}
+    history_messages = session_memory.chat_memory.messages if session_memory.chat_memory else []
+    logger.debug(f"Retrieved {len(history_messages)} history messages for agent context.")
 
-    context = session.get("history", [])
-    session_data = session.get("data")  # all data.
+    agent_input = {
+        "input": request.query,
+        "chat_history": history_messages,
+        "session_id": session_id
+    }
+    config = {"configurable": {"session_id": session_id}}
 
     try:
-        if session_data:
-            # If there's data, prepare the combined prompt using all available log insights.
+        logger.debug(f"Invoking agent executor for session {session_id}...")
+        agent_response = await agent_executor.ainvoke(agent_input, config=config)
+        final_answer = agent_response.get("output", "Error: Agent did not produce a final answer.")
 
-            response_text = process_query_with_logs(request.query, session_data, llm_provider, context)
-            response_type = "combined"
-        else:
-             response_text = process_query(request.query, llm_provider, context)  # Pass context
-             response_type = "query-only"
+        logger.info(f"Agent execution successful for session {session_id}. Output length: {len(final_answer)}")
+        logger.debug(f"Agent final output snippet: {final_answer[:200]}...")
 
-        # Truncate history if it's too long
-        if len(session["history"]) >= MAX_HISTORY_LENGTH:
-            truncated_message = "Conversation history has been truncated to the most recent interactions due to length limits. For best results, please start a new conversation if you're addressing a new issue."
-            session["history"] = session["history"][-(MAX_HISTORY_LENGTH - 2):] #Keep recent ones
-            session["history"].insert(0,{"role": "assistant", "content": truncated_message}) #Inform user
-        else:
-            truncated_message = None # Set to None if not truncated
+        session_memory.save_context({"input": request.query}, {"output": final_answer})
+        logger.debug(f"Manually saved final query and agent answer to session {session_id} memory.")
 
-        session["history"].append({"role": "user", "content": request.query, "timestamp": time.time()}) # Store the raw text query
-        session["history"].append({"role": "assistant", "content": response_text, "timestamp": time.time()}) # store the raw text.
-        session["last_activity"] = time.time() # Update last activity time
-        save_session_data(session_id, session, sessions) # Pass SESSIONS here
+        processing_duration = time.time() - start_time
+        logger.info(f"Completed agentic /query request for session {session_id} in {processing_duration:.2f}s")
 
-        # Include a message if history was truncated, prepended to the response
-        if truncated_message:
-            response_text = f"<p>{truncated_message}</p>" + response_text
+        return TroubleshootingResponse(answer=final_answer, action_items=None)
 
-        response.headers.update(headers) # Update headers
-        return response_text
-
-    except LLMParsingError as e:
-      logger.error(f"LLM parsing error: {e}", exc_info=True)
-      raise HTTPException(status_code=502, detail="Error processing LLM response.")
-    except ValueError as ve:
-        logger.error(f"Value Error: {ve}", exc_info=True)
-        raise HTTPException(status_code=400, detail=str(ve))
-    except KeyError as ke:
-        logger.error(f"Key Error: {ke}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Internal Server Error")
     except Exception as e:
-        logger.error(f"Unexpected Error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Internal server error.")
-    
-    
-@app.post("/feedback", response_model=Dict[str, str])  # Keep simple response for feedback
+        logger.exception(f"Agent execution failed for session {session_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"An error occurred while processing your query with the agent: {e}")
+
+
+# --- /feedback endpoint ---
+@app.post(
+    "/feedback",
+    response_model=Dict[str, str],
+    summary="Submit Feedback (Not Implemented)",
+    description="Endpoint for submitting feedback on responses (currently inactive)."
+)
 async def handle_feedback(feedback_request: FeedbackRequest) -> Dict[str, str]:
-    """Handles user feedback and updates the learning module."""
-    try:
-        update_session_learning(feedback_request.dict())
-        logger.info("Feedback received: %s", feedback_request.dict())
-        return {"status": "Feedback received"}  # Consistent response
-    except ValueError as ve:
-        logger.error(f"Feedback Value Error: {ve}", exc_info=True)
-        raise HTTPException(status_code=400, detail=str(ve))
-    except Exception as e:
-        logger.error(f"Error processing feedback: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Internal server error.")
+     logger.warning("Feedback endpoint called but is not fully implemented.")
+     return {"status": "Feedback endpoint not currently active."}
+
+
+# --- / endpoint ---
+@app.get(
+    "/",
+    include_in_schema=False # Hide from OpenAPI docs
+)
+async def root():
+     return {"message": "FaultMaven API is running."}
