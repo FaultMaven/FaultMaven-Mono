@@ -1,0 +1,26 @@
+{
+  "name": "faultmaven",
+  "version": "1.0.0",
+  "description": "## 🚀 Introduction FaultMaven is an **AI-powered troubleshooting assistant** designed for **Engineers, SREs, and DevOps professionals**. It operates as a **browser-integrated companion**, dynamically analyzing logs, observability data, and incident reports to provide **real-time insights and guided troubleshooting**.",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs",
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sterlanyu/faultmaven.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/sterlanyu/faultmaven/issues"
+  },
+  "homepage": "https://github.com/sterlanyu/faultmaven#readme",
+  "dependencies": {
+    "frontend": "file:frontend"
+  }
+}
