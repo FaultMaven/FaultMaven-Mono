@@ -174,3 +174,18 @@ cython_debug/
 # The source files to keep temporarily
 .tmp/
 
+# Next.js frontend build artifacts and dependencies
+frontend/.next/
+frontend/node_modules/
+frontend/.env.local
+frontend/.env.development.local
+frontend/.env.test.local
+frontend/.env.production.local
+frontend/build/
+frontend/out/
+frontend/.eslintcache
+frontend/*.tsbuildinfo
+frontend/coverage/
+frontend/package-lock.json
+frontend/.vscode/
+frontend/.npmrc
