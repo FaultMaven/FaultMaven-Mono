@@ -1,29 +1,23 @@
-// src/app/page.tsx
-import { HeroSection } from '@/components/landing/HeroSection';
-import { ProblemSection } from '@/components/landing/ProblemSection';
-import { SolutionSection } from '@/components/landing/SolutionSection';
-import { FeaturesSection } from '@/components/landing/FeaturesSection';
-import { HowItWorksSection } from '@/components/landing/HowItWorksSection';
-import { UseCasesSection } from '@/components/landing/UseCasesSection';
-import { TestimonialsSection } from '@/components/landing/TestimonialsSection';
-import { TrustSection } from '@/components/landing/TrustSection';
-import { FAQSection } from '@/components/landing/FAQSection';
-import { FinalCTASection } from '@/components/landing/FinalCTASection';
+import Hero from "@/components/sections/Hero";
+import ProblemSection from "@/components/sections/ProblemSection";
+import ApproachSection from "@/components/sections/ApproachSection";
+import CapabilitiesSection from "@/components/sections/CapabilitiesSection";
+import GettingStartedSection from "@/components/sections/GettingStartedSection";
+import VisionSnippet from "@/components/sections/VisionSnippet";
+import FAQSnippet from "@/components/sections/FAQSnippet";
+import FinalCTASection from "@/components/sections/FinalCTASection";
 
-export default function HomePage() {
+export default function Home() {
   return (
-    // Using fragments <>...</> as we don't need an extra wrapper div here
-    <>
-      <HeroSection />
+    <main>
+      <Hero />
       <ProblemSection />
-      <SolutionSection />
-      <FeaturesSection />
-      <HowItWorksSection />
-      <UseCasesSection />
-      <TestimonialsSection />
-      <TrustSection />
-      <FAQSection />
+      <ApproachSection />
+      <CapabilitiesSection />
+      <GettingStartedSection />
+      <VisionSnippet />
+      <FAQSnippet />
       <FinalCTASection />
-    </>
+    </main>
   );
 }

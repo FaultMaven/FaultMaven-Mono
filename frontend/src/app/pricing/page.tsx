@@ -1,17 +1,22 @@
-// src/app/pricing/page.tsx
-
-import React from 'react'; // Optional in newer Next.js, but good practice
-
-// Make sure you have 'export default function ...'
 export default function PricingPage() {
-  // Make sure it returns some JSX
   return (
-    <div className="container mx-auto py-8">
-      <h1 className="text-3xl font-bold mb-4">Pricing</h1>
-      <p className="text-muted-foreground">
-        Details about FaultMaven pricing plans will be available here soon.
-      </p>
-      {/* TODO: Add actual pricing table/content later */}
-    </div>
-  );
+    <main className="bg-white">
+      <section className="py-20 px-6 bg-indigo-50 text-center">
+        <h1 className="text-3xl md:text-4xl font-bold text-gray-900 mb-6">
+          Fair Pricing, Built Together: Our Commitment to Value
+        </h1>
+      </section>
 
+      <section className="py-16 px-6">
+        <div className="max-w-4xl mx-auto">
+          <p className="text-lg text-gray-700 mb-6">
+            At FaultMaven, our very existence is dedicated to delivering exceptional value to you, our fellow engineers and operations professionals.
+          </p>
+          <p className="text-lg text-gray-700">
+            While we're currently focused on perfecting FaultMaven 1.0 in close collaboration with our early design partners, we believe it's important to share our philosophy on pricing—an approach grounded in fairness, transparency, and mutual success.
+          </p>
+        </div>
+      </section>
+    </main>
+  );
+}

@@ -215,6 +215,7 @@ Contains only the code specific to the browser extension, now built using **WXT*
 - Smaller extension package size
 
 **Updated Project Structure for `faultmaven-extension/` (WXT based):**
+```
 faultmaven-extension/
 ├── .output/                      # Build output (WXT managed, not committed)
 ├── .wxt/                         # WXT generated types/cache (not committed)
@@ -244,6 +245,7 @@ faultmaven-extension/
 ├── tsconfig.json                 # TypeScript configuration
 ├── wxt.config.ts                 # WXT configuration file
 └── README.md
+```
 
 ### Note on manifest.json
 

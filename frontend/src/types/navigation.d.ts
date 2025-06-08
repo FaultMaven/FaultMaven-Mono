@@ -1,0 +1,12 @@
+export type AppRoute = 
+  | '/'
+  | '/about'
+  | '/product'
+  | '/pricing'
+  | '/resources/faq'
+  | '/roadmap'
+  | '/use-cases'
+  | '/waitlist'
+  | '/privacy'
+  | '/terms'
+  | '/contact'
