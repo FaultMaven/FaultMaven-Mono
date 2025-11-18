@@ -1,3 +1,16 @@
+> **⚠️ NOTICE: This is the historical monolithic codebase**
+> 
+> This repository contains the original monolithic FaultMaven application and serves as a reference for:
+> - **Design documentation and architectural decisions** (206 markdown files in `/docs`)
+> - Migration to microservices architecture
+> - Historical context for the current microservices implementation
+> 
+> **Current active development**: See [FaultMaven/faultmaven](https://github.com/FaultMaven/faultmaven) for the new microservices architecture.
+> 
+> **Repository Status**: 🔒 **Archived** - Read-only reference, no active development
+> 
+> ---
+
 # FaultMaven
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Python Version](https://img.shields.io/badge/Python-3.11%2B-blue)](https://www.python.org/downloads/)
